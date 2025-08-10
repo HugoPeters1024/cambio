@@ -2,11 +2,14 @@ use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_renet::renet::ClientId;
 use serde::{Deserialize, Serialize};
 
+use crate::cards::CardRef;
+
 
 #[derive(Debug, Serialize, Deserialize, Component)]
-pub enum ServerMessages {
+pub enum ServerMessage {
     PlayerConnected { id: ClientId },
     PlayerDisconnected { id: ClientId },
+    CardPickedUp { id: ClientId, card: CardRef },
 }
 
 #[derive(Debug, Serialize, Deserialize, Component)]
@@ -16,6 +19,7 @@ pub enum ServerMessageUnreliable {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientClaim {
+    PickupCard(CardRef),
 }
 
 #[derive(Debug, Serialize, Deserialize)]

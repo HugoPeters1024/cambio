@@ -1,8 +1,14 @@
 use bevy::{picking::hover::PickingInteraction, prelude::*, window::PrimaryWindow};
+use bevy_renet::renet::{ClientId, RenetClient};
+use serde::{Deserialize, Serialize};
 
-use crate::assets::{GameAssets, GameState};
+use crate::{
+    assets::{GameAssets, GameState},
+    client::ClientExt,
+    messages::ClientClaim,
+};
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Suit {
     Spades,
     Hearts,
@@ -10,7 +16,7 @@ pub enum Suit {
     Diamonds,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Rank {
     Ace,
     Two,
@@ -27,12 +33,19 @@ pub enum Rank {
     King,
 }
 
-#[derive(Component, PartialEq, Eq, Clone, Copy)]
+// TODO(this needs to specify and index for a specific card in the game)
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Component)]
+pub struct CardRef {
+    pub client_id: ClientId,
+}
+
+#[derive(Debug, Component, PartialEq, Eq, Clone, Copy)]
 #[require(Transform)]
 pub struct Card {
     pub suit: Suit,
     pub rank: Rank,
 }
+
 
 pub struct CardPlugin;
 
@@ -44,7 +57,6 @@ impl Plugin for CardPlugin {
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         );
-        app.add_systems(PreUpdate, move_with_cursor);
     }
 }
 
@@ -78,21 +90,11 @@ fn sync_sprite_with_card(mut q: Query<(&mut Sprite, &Card), Changed<Card>>) {
 
 fn select_card(
     trigger: Trigger<Pointer<Click>>,
-    mut commands: Commands,
+    refs: Query<&CardRef, With<Card>>,
+    mut client: ResMut<RenetClient>,
 ) {
-}
-
-fn move_with_cursor(
-    mut query: Query<(&mut Transform), With<Card>>,
-    window: Single<&Window, With<PrimaryWindow>>,
-    camera: Single<(&Camera, &GlobalTransform)>,
-) {
-    if let Some(mpos) = window.cursor_position() {
-        for mut transform in query.iter_mut() {
-            if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, mpos) {
-                transform.translation.x = world_pos.x;
-                transform.translation.y = world_pos.y;
-            }
-        }
+    if let Ok(card_ref) = refs.get(trigger.target) {
+        let claim = ClientClaim::PickupCard(*card_ref);
+        client.send_claim(claim);
     }
 }

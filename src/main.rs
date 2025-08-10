@@ -1,8 +1,6 @@
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 use bevy::window::WindowResolution;
 use bevy_renet::netcode::NetcodeTransportError;
-use bevy_renet::renet::RenetClient;
 
 mod assets;
 mod cards;
@@ -12,7 +10,6 @@ mod server;
 
 use crate::assets::*;
 use crate::cards::*;
-use crate::client::ClientExt;
 use crate::client::ClientPlugin;
 use crate::server::ServerPlugin;
 

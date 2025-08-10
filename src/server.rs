@@ -10,16 +10,39 @@ use bevy_renet::{
     renet::{ClientId, ConnectionConfig, DefaultChannel, RenetServer, ServerEvent},
 };
 
-use crate::messages::*;
+use crate::{
+    cards::{Card, CardRef},
+    messages::*,
+};
 
-#[derive(Default, Resource)]
-struct ServerState {
-    mouse_positions: HashMap<ClientId, Vec2>,
+trait ServerExt {
+    fn broadcast_message_typed(&mut self, message: ServerMessage);
+
+    fn send_message_typed(&mut self, client_id: ClientId, message: ServerMessage);
+}
+
+impl ServerExt for RenetServer {
+    fn broadcast_message_typed(&mut self, message: ServerMessage) {
+        let encoded = bincode::serde::encode_to_vec(message, bincode::config::standard()).unwrap();
+        self.broadcast_message(DefaultChannel::ReliableOrdered, encoded);
+    }
+
+    fn send_message_typed(&mut self, client_id: ClientId, message: ServerMessage) {
+        let encoded = bincode::serde::encode_to_vec(message, bincode::config::standard()).unwrap();
+        self.send_message(client_id, DefaultChannel::ReliableOrdered, encoded);
+    }
+}
+
+#[derive(Debug, Default)]
+struct PlayerState {
+    mouse_pos: Vec2,
+    table_cards: Vec<Card>,
+    is_dragging: Option<CardRef>,
 }
 
 #[derive(Default, Resource)]
-struct Lobby {
-    players: HashSet<ClientId>,
+struct ServerState {
+    players: HashMap<ClientId, PlayerState>,
 }
 
 pub struct ServerPlugin;
@@ -32,7 +55,6 @@ impl Plugin for ServerPlugin {
         app.insert_resource(server);
         app.insert_resource(transport);
         app.init_resource::<ServerState>();
-        app.init_resource::<Lobby>();
 
         app.add_systems(Update, (server_update_system, server_sync_clients).chain());
     }
@@ -62,7 +84,6 @@ fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
 fn server_update_system(
     mut server_events: EventReader<ServerEvent>,
     mut server: ResMut<RenetServer>,
-    mut lobby: ResMut<Lobby>,
     mut state: ResMut<ServerState>,
 ) {
     for event in server_events.read() {
@@ -72,37 +93,34 @@ fn server_update_system(
 
                 // We could send an InitState with all the players id and positions for the client
                 // but this is easier to do.
-                for &player_id in lobby.players.iter() {
-                    let message = bincode::serde::encode_to_vec(
-                        &ServerMessages::PlayerConnected { id: player_id },
-                        bincode::config::standard(),
+                for &player_id in state.players.keys() {
+                    server.send_message_typed(
+                        *client_id,
+                        ServerMessage::PlayerConnected { id: player_id },
                     )
-                    .unwrap();
-                    server.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
 
-                lobby.players.insert(*client_id);
-
-                let message = bincode::serde::encode_to_vec(
-                    &ServerMessages::PlayerConnected { id: *client_id },
-                    bincode::config::standard(),
-                )
-                .unwrap();
-                server.broadcast_message(DefaultChannel::ReliableOrdered, message);
+                state.players.insert(*client_id, PlayerState::default());
+                server.broadcast_message_typed(ServerMessage::PlayerConnected { id: *client_id });
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 println!("Player {} disconnected: {}", client_id, reason);
-
-                let message = bincode::serde::encode_to_vec(
-                    &ServerMessages::PlayerDisconnected { id: *client_id },
-                    bincode::config::standard(),
-                )
-                .unwrap();
-
-                lobby.players.remove(client_id);
-
-                server.broadcast_message(DefaultChannel::ReliableOrdered, message);
+                state.players.remove(client_id);
+                server
+                    .broadcast_message_typed(ServerMessage::PlayerDisconnected { id: *client_id });
             }
+        }
+    }
+
+    for client_id in server.clients_id() {
+        while let Some(message) = server.receive_message(client_id, DefaultChannel::ReliableOrdered)
+        {
+            let claim: ClientClaim =
+                bincode::serde::decode_from_slice(&message, bincode::config::standard())
+                    .unwrap()
+                    .0;
+            println!("Got claim from {}: {:?}", client_id, claim);
+            handle_claim(&client_id, &claim, &mut state, &mut server);
         }
     }
 
@@ -114,7 +132,9 @@ fn server_update_system(
                     .0;
             match claim {
                 ClientClaimUnreliable::MousePosition(vec2) => {
-                    state.mouse_positions.insert(client_id, vec2);
+                    state.players.entry(client_id).and_modify(|player_state| {
+                        player_state.mouse_pos = vec2;
+                    });
                 }
             }
         }
@@ -122,7 +142,33 @@ fn server_update_system(
 }
 
 fn server_sync_clients(mut server: ResMut<RenetServer>, state: Res<ServerState>) {
-    let message = ServerMessageUnreliable::MousePositions(state.mouse_positions.clone());
+    let message = ServerMessageUnreliable::MousePositions(
+        state
+            .players
+            .iter()
+            .map(|(id, state)| (*id, state.mouse_pos))
+            .collect(),
+    );
     let message = bincode::serde::encode_to_vec(&message, bincode::config::standard()).unwrap();
     server.broadcast_message(DefaultChannel::Unreliable, message);
+}
+
+fn handle_claim(
+    client_id: &ClientId,
+    claim: &ClientClaim,
+    state: &mut ServerState,
+    server: &mut RenetServer,
+) {
+    match claim {
+        ClientClaim::PickupCard(card_ref) => {
+            if let Some(player_state) = state.players.get_mut(client_id) {
+                player_state.is_dragging = Some(*card_ref);
+            }
+
+            server.broadcast_message_typed(ServerMessage::CardPickedUp {
+                id: *client_id,
+                card: *card_ref,
+            });
+        }
+    }
 }

@@ -28,9 +28,17 @@ impl ClientExt for RenetClient {
     }
 }
 
+#[derive(Debug, Component)]
+pub struct IsPickedUp(pub ClientId);
+
+pub struct PlayerState {
+    root: Entity,
+    mouse_pos: Vec2,
+}
+
 #[derive(Default, Resource)]
-struct Lobby {
-    players: HashMap<ClientId, Entity>,
+pub struct ClientState {
+    players: HashMap<ClientId, PlayerState>,
 }
 
 pub struct ClientPlugin;
@@ -43,11 +51,11 @@ impl Plugin for ClientPlugin {
         app.insert_resource(client);
         app.insert_resource(transport);
 
-        app.init_resource::<Lobby>();
+        app.init_resource::<ClientState>();
 
         app.add_systems(
             Update,
-            (client_sync_players, publish_cursor).run_if(client_connected),
+            (client_sync_players, publish_cursor, sync_dragging).run_if(client_connected),
         );
     }
 }
@@ -76,9 +84,7 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
 fn client_sync_players(
     mut commands: Commands,
     mut client: ResMut<RenetClient>,
-    mut lobby: ResMut<Lobby>,
-    mut transforms: Query<&mut Transform>,
-    transport: Res<NetcodeClientTransport>,
+    mut lobby: ResMut<ClientState>,
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
         let server_message =
@@ -86,21 +92,38 @@ fn client_sync_players(
                 .unwrap()
                 .0;
         match server_message {
-            ServerMessages::PlayerConnected { id } => {
+            ServerMessage::PlayerConnected { id } => {
                 println!("Player {} connected.", id);
                 let player_entity = commands
-                    .spawn(Card {
-                        suit: Suit::Diamonds,
-                        rank: Rank::Five,
-                    })
+                    .spawn((
+                        Card {
+                            suit: Suit::Diamonds,
+                            rank: Rank::Five,
+                        },
+                        CardRef {
+                            client_id: id,
+                        },
+                    ))
                     .id();
 
-                lobby.players.insert(id, player_entity);
+                lobby.players.insert(
+                    id,
+                    PlayerState {
+                        root: player_entity,
+                        mouse_pos: Vec2::ZERO,
+                    },
+                );
             }
-            ServerMessages::PlayerDisconnected { id } => {
+            ServerMessage::PlayerDisconnected { id } => {
                 println!("Player {} disconnected.", id);
-                if let Some(player_entity) = lobby.players.remove(&id) {
-                    commands.entity(player_entity).despawn();
+                if let Some(player_state) = lobby.players.remove(&id) {
+                    commands.entity(player_state.root).despawn();
+                }
+            }
+            ServerMessage::CardPickedUp { id, card } => {
+                println!("Player {} picked up card {:?}.", id, card);
+                if let Some(player_state) = lobby.players.get_mut(&id) {
+                    commands.entity(player_state.root).insert(IsPickedUp(id));
                 }
             }
         }
@@ -114,17 +137,8 @@ fn client_sync_players(
         match message {
             ServerMessageUnreliable::MousePositions(hash_map) => {
                 for (client_id, cpos) in hash_map.iter() {
-                    if client_id == &transport.client_id() {
-                        // These are purely visual and logically unimportant values, we prefer
-                        // our local state.
-                        continue;
-                    }
-
-                    if let Some(target_entity) = lobby.players.get(client_id) {
-                        if let Ok(mut transform) = transforms.get_mut(*target_entity) {
-                            transform.translation.x = cpos.x;
-                            transform.translation.y = cpos.y;
-                        }
+                    if let Some(player_state) = lobby.players.get_mut(client_id) {
+                        player_state.mouse_pos = *cpos;
                     }
                 }
             }
@@ -140,6 +154,15 @@ fn publish_cursor(
     if let Some(cpos) = window.cursor_position() {
         if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, cpos) {
             client.send_claim_unreliable(ClientClaimUnreliable::MousePosition(world_pos));
+        }
+    }
+}
+
+fn sync_dragging(mut query: Query<(&mut Transform, &IsPickedUp)>, state: Res<ClientState>) {
+    for (mut transform, picked_up) in query.iter_mut() {
+        if let Some(player_state) = state.players.get(&picked_up.0) {
+            transform.translation.x = player_state.mouse_pos.x;
+            transform.translation.y = player_state.mouse_pos.y;
         }
     }
 }
