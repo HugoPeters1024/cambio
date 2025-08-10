@@ -28,6 +28,7 @@ pub enum Rank {
 }
 
 #[derive(Component, PartialEq, Eq, Clone, Copy)]
+#[require(Transform)]
 pub struct Card {
     pub suit: Suit,
     pub rank: Rank,
@@ -75,35 +76,22 @@ fn sync_sprite_with_card(mut q: Query<(&mut Sprite, &Card), Changed<Card>>) {
     }
 }
 
-#[derive(Component)]
-struct Dragging {
-    offset: Vec2,
-}
-
 fn select_card(
     trigger: Trigger<Pointer<Click>>,
     mut commands: Commands,
-    dragging: Query<&Dragging, With<Card>>,
 ) {
-    if dragging.contains(trigger.target) {
-        commands.entity(trigger.target).remove::<Dragging>();
-    } else {
-        commands
-            .entity(trigger.target)
-            .insert(Dragging { offset: Vec2::ZERO });
-    }
 }
 
 fn move_with_cursor(
-    mut query: Query<(&mut Transform, &Dragging), With<Card>>,
+    mut query: Query<(&mut Transform), With<Card>>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform)>,
 ) {
     if let Some(mpos) = window.cursor_position() {
-        for (mut transform, dragging) in query.iter_mut() {
+        for mut transform in query.iter_mut() {
             if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, mpos) {
-                transform.translation.x = world_pos.x + dragging.offset.x;
-                transform.translation.y = world_pos.y + dragging.offset.y;
+                transform.translation.x = world_pos.x;
+                transform.translation.y = world_pos.y;
             }
         }
     }
