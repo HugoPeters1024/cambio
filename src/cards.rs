@@ -79,7 +79,7 @@ fn on_spawn(mut commands: Commands, q: Query<Entity, Added<Card>>, assets: Res<G
     }
 }
 
-fn sync_sprite_with_card(mut q: Query<(&mut Sprite, &Card), Changed<Card>>) {
+fn sync_sprite_with_card(mut q: Query<(&mut Sprite, &Card)>) {
     for (mut sprite, card) in q.iter_mut() {
         if let Some(texture_atlas) = sprite.texture_atlas.as_mut() {
             texture_atlas.index = card.suit as usize * 13 + card.rank as usize;
@@ -91,9 +91,18 @@ fn select_card(
     trigger: Trigger<Pointer<Click>>,
     refs: Query<&CardRef, With<Card>>,
     mut client: ResMut<RenetClient>,
+    camera: Single<(&Camera, &GlobalTransform)>,
 ) {
     if let Ok(card_ref) = refs.get(trigger.target) {
-        let claim = ClientClaim::ClickCard(*card_ref);
-        client.send_claim(claim);
+        if let Ok(world_pos) = camera
+            .0
+            .viewport_to_world_2d(camera.1, trigger.event().pointer_location.position)
+        {
+            let claim = ClientClaim::ClickCard {
+                card_ref: *card_ref,
+                mouse_pos: world_pos,
+            };
+            client.send_claim(claim);
+        }
     }
 }

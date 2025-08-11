@@ -9,7 +9,7 @@ pub enum ServerMessage {
     PlayerConnected { id: ClientId },
     PlayerDisconnected { id: ClientId },
     CardPickedUp { id: ClientId, card: CardRef },
-    CardDropped { id: ClientId },
+    CardDropped { id: ClientId, position: Vec2 },
 }
 
 #[derive(Debug, Serialize, Deserialize, Component)]
@@ -19,7 +19,10 @@ pub enum ServerMessageUnreliable {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientClaim {
-    ClickCard(CardRef),
+    ClickCard {
+        card_ref: CardRef,
+        mouse_pos: Vec2,
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -160,11 +160,11 @@ fn handle_claim(
     server: &mut RenetServer,
 ) {
     match claim {
-        ClientClaim::ClickCard(card_ref) => {
+        ClientClaim::ClickCard { card_ref, mouse_pos } => {
             if let Some(player_state) = state.players.get_mut(client_id) {
                 if player_state.is_dragging.is_some() {
                     player_state.is_dragging = None;
-                    server.broadcast_message_typed(ServerMessage::CardDropped { id: *client_id });
+                    server.broadcast_message_typed(ServerMessage::CardDropped { id: *client_id, position: *mouse_pos });
                 } else {
                     player_state.is_dragging = Some(*card_ref);
 

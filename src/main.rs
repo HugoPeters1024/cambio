@@ -64,7 +64,7 @@ fn setup(mut commands: Commands) {
         Camera2d,
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: bevy::render::camera::ScalingMode::FixedVertical {
-                viewport_height: 800.0,
+                viewport_height: 480.0,
             },
             ..OrthographicProjection::default_2d()
         }),

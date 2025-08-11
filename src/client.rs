@@ -36,8 +36,9 @@ pub struct PlayerState {
     mouse_pos: Vec2,
 }
 
-#[derive(Default, Resource)]
+#[derive(Resource)]
 pub struct ClientState {
+    me: ClientId,
     players: HashMap<ClientId, PlayerState>,
 }
 
@@ -48,13 +49,15 @@ impl Plugin for ClientPlugin {
         app.add_plugins(RenetClientPlugin);
         app.add_plugins(NetcodeClientPlugin);
         let (client, transport) = new_renet_client();
+        app.insert_resource(ClientState {
+            me: transport.client_id(),
+            players: HashMap::default(),
+        });
         app.insert_resource(client);
         app.insert_resource(transport);
 
-        app.init_resource::<ClientState>();
-
         app.add_systems(
-            Update,
+            PreUpdate,
             (client_sync_players, publish_cursor, sync_dragging).run_if(client_connected),
         );
     }
@@ -85,6 +88,7 @@ fn client_sync_players(
     mut commands: Commands,
     mut client: ResMut<RenetClient>,
     mut lobby: ResMut<ClientState>,
+    mut transforms: Query<&mut Transform>,
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
         let server_message =
@@ -120,14 +124,18 @@ fn client_sync_players(
             }
             ServerMessage::CardPickedUp { id, card } => {
                 println!("Player {} picked up card {:?}.", id, card);
-                if let Some(player_state) = lobby.players.get_mut(&id) {
+                if let Some(player_state) = lobby.players.get_mut(&card.client_id) {
                     commands.entity(player_state.root).insert(IsPickedUp(id));
                 }
             }
-            ServerMessage::CardDropped { id } => {
+            ServerMessage::CardDropped { id, position } => {
                 println!("Player {} dropped its card.", id);
                 if let Some(player_state) = lobby.players.get_mut(&id) {
                     commands.entity(player_state.root).remove::<IsPickedUp>();
+                    if let Ok(mut transform) = transforms.get_mut(player_state.root) {
+                        transform.translation.x = position.x;
+                        transform.translation.y = position.y;
+                    }
                 }
             }
         }
@@ -162,9 +170,22 @@ fn publish_cursor(
     }
 }
 
-fn sync_dragging(mut query: Query<(&mut Transform, &IsPickedUp)>, state: Res<ClientState>) {
+fn sync_dragging(
+    mut query: Query<(&mut Transform, &IsPickedUp)>,
+    state: Res<ClientState>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    camera: Single<(&Camera, &GlobalTransform)>,
+) {
     for (mut transform, picked_up) in query.iter_mut() {
-        if let Some(player_state) = state.players.get(&picked_up.0) {
+        if picked_up.0 == state.me {
+            // We prefer to show our local cursor position for better accuracy
+            if let Some(cpos) = window.cursor_position() {
+                if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, cpos) {
+                    transform.translation.x = world_pos.x;
+                    transform.translation.y = world_pos.y;
+                }
+            }
+        } else if let Some(player_state) = state.players.get(&picked_up.0) {
             transform.translation.x = player_state.mouse_pos.x;
             transform.translation.y = player_state.mouse_pos.y;
         }
