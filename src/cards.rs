@@ -46,7 +46,6 @@ pub struct Card {
     pub rank: Rank,
 }
 
-
 pub struct CardPlugin;
 
 impl Plugin for CardPlugin {
@@ -94,7 +93,7 @@ fn select_card(
     mut client: ResMut<RenetClient>,
 ) {
     if let Ok(card_ref) = refs.get(trigger.target) {
-        let claim = ClientClaim::PickupCard(*card_ref);
+        let claim = ClientClaim::ClickCard(*card_ref);
         client.send_claim(claim);
     }
 }

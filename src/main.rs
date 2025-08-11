@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
+use bevy::winit::UpdateMode;
+use bevy::winit::WinitSettings;
 use bevy_renet::netcode::NetcodeTransportError;
 
 mod assets;
@@ -29,7 +31,6 @@ fn main() {
     if is_host {
         app.add_plugins(MinimalPlugins);
         app.add_plugins(ServerPlugin);
-
     } else {
         app.add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -39,6 +40,14 @@ fn main() {
             }),
             ..default()
         }));
+
+        // Because we doing networking, there might be updates to the game
+        // even when the window is not in focus, so we should ensure our update
+        // systems keep running in that case.
+        app.insert_resource(WinitSettings {
+            unfocused_mode: UpdateMode::Continuous,
+            ..default()
+        });
         app.add_plugins(ClientPlugin);
 
         app.add_plugins((GameAssetPlugin, CardPlugin));

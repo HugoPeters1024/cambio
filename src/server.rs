@@ -62,7 +62,7 @@ impl Plugin for ServerPlugin {
 
 fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
     const PROTOCOL_ID: u64 = 7;
-    let public_addr = "127.0.0.1:5000".parse().unwrap();
+    let public_addr = "127.0.0.1:9000".parse().unwrap();
     let socket = UdpSocket::bind(public_addr).unwrap();
     let current_time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -160,15 +160,20 @@ fn handle_claim(
     server: &mut RenetServer,
 ) {
     match claim {
-        ClientClaim::PickupCard(card_ref) => {
+        ClientClaim::ClickCard(card_ref) => {
             if let Some(player_state) = state.players.get_mut(client_id) {
-                player_state.is_dragging = Some(*card_ref);
-            }
+                if player_state.is_dragging.is_some() {
+                    player_state.is_dragging = None;
+                    server.broadcast_message_typed(ServerMessage::CardDropped { id: *client_id });
+                } else {
+                    player_state.is_dragging = Some(*card_ref);
 
-            server.broadcast_message_typed(ServerMessage::CardPickedUp {
-                id: *client_id,
-                card: *card_ref,
-            });
+                    server.broadcast_message_typed(ServerMessage::CardPickedUp {
+                        id: *client_id,
+                        card: *card_ref,
+                    });
+                }
+            }
         }
     }
 }

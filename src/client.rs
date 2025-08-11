@@ -62,7 +62,7 @@ impl Plugin for ClientPlugin {
 
 fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
     const PROTOCOL_ID: u64 = 7;
-    let server_addr = "127.0.0.1:5000".parse().unwrap();
+    let server_addr = "127.0.0.1:9000".parse().unwrap();
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
     let current_time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -100,9 +100,7 @@ fn client_sync_players(
                             suit: Suit::Diamonds,
                             rank: Rank::Five,
                         },
-                        CardRef {
-                            client_id: id,
-                        },
+                        CardRef { client_id: id },
                     ))
                     .id();
 
@@ -124,6 +122,12 @@ fn client_sync_players(
                 println!("Player {} picked up card {:?}.", id, card);
                 if let Some(player_state) = lobby.players.get_mut(&id) {
                     commands.entity(player_state.root).insert(IsPickedUp(id));
+                }
+            }
+            ServerMessage::CardDropped { id } => {
+                println!("Player {} dropped its card.", id);
+                if let Some(player_state) = lobby.players.get_mut(&id) {
+                    commands.entity(player_state.root).remove::<IsPickedUp>();
                 }
             }
         }

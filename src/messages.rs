@@ -4,12 +4,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::cards::CardRef;
 
-
 #[derive(Debug, Serialize, Deserialize, Component)]
 pub enum ServerMessage {
     PlayerConnected { id: ClientId },
     PlayerDisconnected { id: ClientId },
     CardPickedUp { id: ClientId, card: CardRef },
+    CardDropped { id: ClientId },
 }
 
 #[derive(Debug, Serialize, Deserialize, Component)]
@@ -19,7 +19,7 @@ pub enum ServerMessageUnreliable {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientClaim {
-    PickupCard(CardRef),
+    ClickCard(CardRef),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
