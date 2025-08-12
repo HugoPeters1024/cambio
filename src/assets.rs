@@ -1,6 +1,9 @@
 use bevy::prelude::*;
 use bevy_asset_loader::prelude::*;
 
+pub const CARD_WIDTH: f32 = 256.0;
+pub const CARD_HEIGHT: f32 = 356.0;
+
 #[derive(AssetCollection, Resource)]
 pub struct GameAssets {
     #[asset(texture_atlas_layout(tile_size_x = 256, tile_size_y = 356, columns = 13, rows = 4))]
@@ -11,7 +14,7 @@ pub struct GameAssets {
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Default, States)]
-pub enum GameState {
+pub enum GamePhase {
     #[default]
     AssetLoading,
     Playing,
@@ -21,9 +24,9 @@ pub struct GameAssetPlugin;
 
 impl Plugin for GameAssetPlugin {
     fn build(&self, app: &mut App) {
-        app.init_state::<GameState>().add_loading_state(
-            LoadingState::new(GameState::AssetLoading)
-                .continue_to_state(GameState::Playing)
+        app.init_state::<GamePhase>().add_loading_state(
+            LoadingState::new(GamePhase::AssetLoading)
+                .continue_to_state(GamePhase::Playing)
                 .load_collection::<GameAssets>(),
         );
     }

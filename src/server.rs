@@ -42,6 +42,7 @@ struct PlayerState {
 
 #[derive(Default, Resource)]
 struct ServerState {
+    player_idx: Vec<ClientId>,
     players: HashMap<ClientId, PlayerState>,
 }
 
@@ -91,17 +92,17 @@ fn server_update_system(
             ServerEvent::ClientConnected { client_id } => {
                 println!("Player {} connected.", client_id);
 
+                state.player_idx.push(*client_id);
+                state.players.insert(*client_id, PlayerState::default());
+
                 // We could send an InitState with all the players id and positions for the client
                 // but this is easier to do.
-                for &player_id in state.players.keys() {
+                for (player_idx, &player_id) in state.player_idx.iter().enumerate() {
                     server.send_message_typed(
                         *client_id,
-                        ServerMessage::PlayerConnected { id: player_id },
+                        ServerMessage::PlayerConnected { id: player_id, player_idx },
                     )
                 }
-
-                state.players.insert(*client_id, PlayerState::default());
-                server.broadcast_message_typed(ServerMessage::PlayerConnected { id: *client_id });
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 println!("Player {} disconnected: {}", client_id, reason);

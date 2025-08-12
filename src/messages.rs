@@ -6,7 +6,7 @@ use crate::cards::CardRef;
 
 #[derive(Debug, Serialize, Deserialize, Component)]
 pub enum ServerMessage {
-    PlayerConnected { id: ClientId },
+    PlayerConnected { id: ClientId, player_idx: usize },
     PlayerDisconnected { id: ClientId },
     CardPickedUp { id: ClientId, card: CardRef },
     CardDropped { id: ClientId, position: Vec2 },

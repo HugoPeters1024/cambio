@@ -32,14 +32,15 @@ impl ClientExt for RenetClient {
 pub struct IsPickedUp(pub ClientId);
 
 pub struct PlayerState {
-    root: Entity,
-    mouse_pos: Vec2,
+    pub player_idx: usize,
+    pub root: Entity,
+    pub mouse_pos: Vec2,
 }
 
 #[derive(Resource)]
 pub struct ClientState {
-    me: ClientId,
-    players: HashMap<ClientId, PlayerState>,
+    pub me: ClientId,
+    pub players: HashMap<ClientId, PlayerState>,
 }
 
 pub struct ClientPlugin;
@@ -96,8 +97,9 @@ fn client_sync_players(
                 .unwrap()
                 .0;
         match server_message {
-            ServerMessage::PlayerConnected { id } => {
-                println!("Player {} connected.", id);
+            ServerMessage::PlayerConnected { id, player_idx } => {
+                println!("Player {} connected.", player_idx);
+
                 let player_entity = commands
                     .spawn((
                         Card {
@@ -113,6 +115,7 @@ fn client_sync_players(
                     PlayerState {
                         root: player_entity,
                         mouse_pos: Vec2::ZERO,
+                        player_idx,
                     },
                 );
             }

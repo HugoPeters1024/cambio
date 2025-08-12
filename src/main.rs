@@ -5,6 +5,7 @@ use bevy::winit::WinitSettings;
 use bevy_renet::netcode::NetcodeTransportError;
 
 mod assets;
+mod cambio;
 mod cards;
 mod client;
 mod messages;
@@ -13,7 +14,11 @@ mod server;
 use crate::assets::*;
 use crate::cards::*;
 use crate::client::ClientPlugin;
+use crate::client::ClientState;
 use crate::server::ServerPlugin;
+
+#[derive(Component)]
+struct PlayerIdxText;
 
 fn main() {
     println!("Usage: run with \"server\" or \"client\" argument");
@@ -52,14 +57,15 @@ fn main() {
 
         app.add_plugins((GameAssetPlugin, CardPlugin));
 
-        app.add_systems(OnEnter(GameState::Playing), setup);
+        app.add_systems(OnEnter(GamePhase::Playing), setup);
+        app.add_systems(Update, update_player_idx_text);
     }
 
     app.add_systems(Update, panic_on_error_system);
     app.run();
 }
 
-fn setup(mut commands: Commands) {
+fn setup(mut commands: Commands, state: Res<ClientState>) {
     commands.spawn((
         Camera2d,
         Projection::Orthographic(OrthographicProjection {
@@ -69,6 +75,16 @@ fn setup(mut commands: Commands) {
             ..OrthographicProjection::default_2d()
         }),
     ));
+
+    commands.spawn((Text::from("You are player: ..."), PlayerIdxText));
+}
+
+fn update_player_idx_text(state: Res<ClientState>, mut query: Query<&mut Text, With<PlayerIdxText>>) {
+    for mut text in query.iter_mut() {
+        if let Some(me) = state.players.get(&state.me) {
+            text.0 = format!("You are player: {}", me.player_idx);
+        }
+    }
 }
 
 // If any error is found we just panic

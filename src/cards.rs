@@ -2,8 +2,8 @@ use bevy::{picking::hover::PickingInteraction, prelude::*, window::PrimaryWindow
 use bevy_renet::renet::{ClientId, RenetClient};
 use serde::{Deserialize, Serialize};
 
+use crate::assets::*;
 use crate::{
-    assets::{GameAssets, GameState},
     client::ClientExt,
     messages::ClientClaim,
 };
@@ -54,7 +54,7 @@ impl Plugin for CardPlugin {
             PreUpdate,
             (on_spawn, sync_sprite_with_card)
                 .chain()
-                .run_if(in_state(GameState::Playing)),
+                .run_if(in_state(GamePhase::Playing)),
         );
     }
 }
@@ -64,13 +64,16 @@ fn on_spawn(mut commands: Commands, q: Query<Entity, Added<Card>>, assets: Res<G
         commands
             .entity(e)
             .insert((
-                Sprite::from_atlas_image(
-                    assets.card_sheet.clone(),
-                    TextureAtlas {
-                        layout: assets.card_sheet_layout.clone(),
-                        index: 0,
-                    },
-                ),
+                Sprite {
+                    custom_size: Some(Vec2::new(CARD_WIDTH, CARD_HEIGHT) * 0.5),
+                    ..Sprite::from_atlas_image(
+                        assets.card_sheet.clone(),
+                        TextureAtlas {
+                            layout: assets.card_sheet_layout.clone(),
+                            index: 0,
+                        },
+                    )
+                },
                 Transform::from_scale(Vec3::splat(0.5)),
                 PickingInteraction::default(),
                 Pickable::default(),
