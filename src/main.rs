@@ -24,11 +24,11 @@ fn main() {
     println!("Usage: run with \"server\" or \"client\" argument");
     let args: Vec<String> = std::env::args().collect();
 
-    let exec_type = &args[1];
-    let is_host = match exec_type.as_str() {
+    let exec_type = if args.len() < 2 { "client" } else { &args[1] };
+    let is_host = match exec_type {
         "client" => false,
         "server" => true,
-        _ => panic!("Invalid argument, must be \"client\" or \"server\"."),
+        _ => panic!("Usage: run with \"server\" or \"client\" argument"),
     };
 
     let mut app = App::new();
@@ -65,7 +65,7 @@ fn main() {
     app.run();
 }
 
-fn setup(mut commands: Commands, state: Res<ClientState>) {
+fn setup(mut commands: Commands) {
     commands.spawn((
         Camera2d,
         Projection::Orthographic(OrthographicProjection {
@@ -79,7 +79,10 @@ fn setup(mut commands: Commands, state: Res<ClientState>) {
     commands.spawn((Text::from("You are player: ..."), PlayerIdxText));
 }
 
-fn update_player_idx_text(state: Res<ClientState>, mut query: Query<&mut Text, With<PlayerIdxText>>) {
+fn update_player_idx_text(
+    state: Res<ClientState>,
+    mut query: Query<&mut Text, With<PlayerIdxText>>,
+) {
     for mut text in query.iter_mut() {
         if let Some(me) = state.players.get(&state.me) {
             text.0 = format!("You are player: {}", me.player_idx);

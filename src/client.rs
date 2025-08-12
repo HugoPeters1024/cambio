@@ -7,8 +7,11 @@ use bevy_renet::{
     renet::{ClientId, ConnectionConfig, DefaultChannel, RenetClient},
 };
 
-use crate::cards::*;
-use crate::messages::*;
+use crate::{
+    cambio::{CambioPlayerState, CambioState},
+    cards::Card,
+    messages::*,
+};
 
 pub trait ClientExt {
     fn send_claim(&mut self, claim: ClientClaim);
@@ -28,12 +31,8 @@ impl ClientExt for RenetClient {
     }
 }
 
-#[derive(Debug, Component)]
-pub struct IsPickedUp(pub ClientId);
-
 pub struct PlayerState {
     pub player_idx: usize,
-    pub root: Entity,
     pub mouse_pos: Vec2,
 }
 
@@ -41,6 +40,7 @@ pub struct PlayerState {
 pub struct ClientState {
     pub me: ClientId,
     pub players: HashMap<ClientId, PlayerState>,
+    pub game: CambioState,
 }
 
 pub struct ClientPlugin;
@@ -50,17 +50,26 @@ impl Plugin for ClientPlugin {
         app.add_plugins(RenetClientPlugin);
         app.add_plugins(NetcodeClientPlugin);
         let (client, transport) = new_renet_client();
-        app.insert_resource(ClientState {
-            me: transport.client_id(),
-            players: HashMap::default(),
-        });
+        let me = transport.client_id();
         app.insert_resource(client);
         app.insert_resource(transport);
 
+        let table_card = app.world_mut().spawn(Card::default()).id();
+
+        app.insert_resource(ClientState {
+            me,
+            players: HashMap::default(),
+            game: CambioState {
+                table_card,
+                players: vec![],
+            },
+        });
+
         app.add_systems(
             PreUpdate,
-            (client_sync_players, publish_cursor, sync_dragging).run_if(client_connected),
+            (client_sync_players, publish_cursor).run_if(client_connected),
         );
+        app.add_systems(Update, sync_render);
     }
 }
 
@@ -88,8 +97,7 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
 fn client_sync_players(
     mut commands: Commands,
     mut client: ResMut<RenetClient>,
-    mut lobby: ResMut<ClientState>,
-    mut transforms: Query<&mut Transform>,
+    mut state: ResMut<ClientState>,
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
         let server_message =
@@ -100,46 +108,26 @@ fn client_sync_players(
             ServerMessage::PlayerConnected { id, player_idx } => {
                 println!("Player {} connected.", player_idx);
 
-                let player_entity = commands
-                    .spawn((
-                        Card {
-                            suit: Suit::Diamonds,
-                            rank: Rank::Five,
-                        },
-                        CardRef { client_id: id },
-                    ))
-                    .id();
-
-                lobby.players.insert(
+                state.players.insert(
                     id,
                     PlayerState {
-                        root: player_entity,
                         mouse_pos: Vec2::ZERO,
                         player_idx,
                     },
                 );
+
+                let card_entity = commands.spawn(Card::default()).id();
+
+                let player_entity = commands
+                    .spawn(CambioPlayerState {
+                        cards: vec![card_entity],
+                    })
+                    .add_child(card_entity)
+                    .id();
+                state.game.players.push(player_entity);
             }
             ServerMessage::PlayerDisconnected { id } => {
                 println!("Player {} disconnected.", id);
-                if let Some(player_state) = lobby.players.remove(&id) {
-                    commands.entity(player_state.root).despawn();
-                }
-            }
-            ServerMessage::CardPickedUp { id, card } => {
-                println!("Player {} picked up card {:?}.", id, card);
-                if let Some(player_state) = lobby.players.get_mut(&card.client_id) {
-                    commands.entity(player_state.root).insert(IsPickedUp(id));
-                }
-            }
-            ServerMessage::CardDropped { id, position } => {
-                println!("Player {} dropped its card.", id);
-                if let Some(player_state) = lobby.players.get_mut(&id) {
-                    commands.entity(player_state.root).remove::<IsPickedUp>();
-                    if let Ok(mut transform) = transforms.get_mut(player_state.root) {
-                        transform.translation.x = position.x;
-                        transform.translation.y = position.y;
-                    }
-                }
             }
         }
     }
@@ -152,7 +140,7 @@ fn client_sync_players(
         match message {
             ServerMessageUnreliable::MousePositions(hash_map) => {
                 for (client_id, cpos) in hash_map.iter() {
-                    if let Some(player_state) = lobby.players.get_mut(client_id) {
+                    if let Some(player_state) = state.players.get_mut(client_id) {
                         player_state.mouse_pos = *cpos;
                     }
                 }
@@ -173,24 +161,12 @@ fn publish_cursor(
     }
 }
 
-fn sync_dragging(
-    mut query: Query<(&mut Transform, &IsPickedUp)>,
-    state: Res<ClientState>,
-    window: Single<&Window, With<PrimaryWindow>>,
-    camera: Single<(&Camera, &GlobalTransform)>,
-) {
-    for (mut transform, picked_up) in query.iter_mut() {
-        if picked_up.0 == state.me {
-            // We prefer to show our local cursor position for better accuracy
-            if let Some(cpos) = window.cursor_position() {
-                if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, cpos) {
-                    transform.translation.x = world_pos.x;
-                    transform.translation.y = world_pos.y;
-                }
-            }
-        } else if let Some(player_state) = state.players.get(&picked_up.0) {
-            transform.translation.x = player_state.mouse_pos.x;
-            transform.translation.y = player_state.mouse_pos.y;
+fn sync_render(state: Res<ClientState>, mut query: Query<(&mut Transform, &CambioPlayerState)>) {
+    // layout the players in a square
+    for (idx, player) in state.game.players.iter().enumerate() {
+        if let Ok((mut transform, _)) = query.get_mut(*player) {
+            transform.translation.x = (idx % 2) as f32 * 100.0;
+            transform.translation.y = (idx / 2) as f32 * 100.0;
         }
     }
 }

@@ -1,4 +1,4 @@
-use bevy::{picking::hover::PickingInteraction, prelude::*, window::PrimaryWindow};
+use bevy::{picking::hover::PickingInteraction, prelude::*};
 use bevy_renet::renet::{ClientId, RenetClient};
 use serde::{Deserialize, Serialize};
 
@@ -8,16 +8,18 @@ use crate::{
     messages::ClientClaim,
 };
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub enum Suit {
+    #[default]
     Spades,
     Hearts,
     Clubs,
     Diamonds,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub enum Rank {
+    #[default]
     Ace,
     Two,
     Three,
@@ -39,7 +41,7 @@ pub struct CardRef {
     pub client_id: ClientId,
 }
 
-#[derive(Debug, Component, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Component, PartialEq, Eq, Clone, Copy, Default)]
 #[require(Transform)]
 pub struct Card {
     pub suit: Suit,

@@ -8,8 +8,6 @@ use crate::cards::CardRef;
 pub enum ServerMessage {
     PlayerConnected { id: ClientId, player_idx: usize },
     PlayerDisconnected { id: ClientId },
-    CardPickedUp { id: ClientId, card: CardRef },
-    CardDropped { id: ClientId, position: Vec2 },
 }
 
 #[derive(Debug, Serialize, Deserialize, Component)]

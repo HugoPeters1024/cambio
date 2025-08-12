@@ -1,19 +1,13 @@
 use std::{net::UdpSocket, time::SystemTime};
 
-use bevy::{
-    platform::collections::{HashMap, HashSet},
-    prelude::*,
-};
+use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_renet::{
     RenetServerPlugin,
     netcode::{NetcodeServerPlugin, NetcodeServerTransport, ServerAuthentication, ServerConfig},
     renet::{ClientId, ConnectionConfig, DefaultChannel, RenetServer, ServerEvent},
 };
 
-use crate::{
-    cards::{Card, CardRef},
-    messages::*,
-};
+use crate::messages::*;
 
 trait ServerExt {
     fn broadcast_message_typed(&mut self, message: ServerMessage);
@@ -33,16 +27,14 @@ impl ServerExt for RenetServer {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct PlayerState {
+    player_idx: usize,
     mouse_pos: Vec2,
-    table_cards: Vec<Card>,
-    is_dragging: Option<CardRef>,
 }
 
 #[derive(Default, Resource)]
 struct ServerState {
-    player_idx: Vec<ClientId>,
     players: HashMap<ClientId, PlayerState>,
 }
 
@@ -86,23 +78,40 @@ fn server_update_system(
     mut server_events: EventReader<ServerEvent>,
     mut server: ResMut<RenetServer>,
     mut state: ResMut<ServerState>,
+    mut player_seq: Local<usize>,
 ) {
     for event in server_events.read() {
         match event {
             ServerEvent::ClientConnected { client_id } => {
                 println!("Player {} connected.", client_id);
 
-                state.player_idx.push(*client_id);
-                state.players.insert(*client_id, PlayerState::default());
 
                 // We could send an InitState with all the players id and positions for the client
                 // but this is easier to do.
-                for (player_idx, &player_id) in state.player_idx.iter().enumerate() {
+                for (&existing_client, player) in state.players.iter() {
                     server.send_message_typed(
                         *client_id,
-                        ServerMessage::PlayerConnected { id: player_id, player_idx },
-                    )
+                        ServerMessage::PlayerConnected {
+                            id: existing_client,
+                            player_idx: player.player_idx,
+                        },
+                    );
                 }
+
+                *player_seq += 1;
+                let new_player_idx = *player_seq;
+                state.players.insert(
+                    *client_id,
+                    PlayerState {
+                        player_idx: new_player_idx,
+                        mouse_pos: Vec2::ZERO,
+                    },
+                );
+                server.broadcast_message_typed(ServerMessage::PlayerConnected {
+                    id: *client_id,
+                    player_idx: new_player_idx,
+                });
+
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 println!("Player {} disconnected: {}", client_id, reason);
@@ -161,20 +170,11 @@ fn handle_claim(
     server: &mut RenetServer,
 ) {
     match claim {
-        ClientClaim::ClickCard { card_ref, mouse_pos } => {
-            if let Some(player_state) = state.players.get_mut(client_id) {
-                if player_state.is_dragging.is_some() {
-                    player_state.is_dragging = None;
-                    server.broadcast_message_typed(ServerMessage::CardDropped { id: *client_id, position: *mouse_pos });
-                } else {
-                    player_state.is_dragging = Some(*card_ref);
-
-                    server.broadcast_message_typed(ServerMessage::CardPickedUp {
-                        id: *client_id,
-                        card: *card_ref,
-                    });
-                }
-            }
+        ClientClaim::ClickCard {
+            card_ref,
+            mouse_pos,
+        } => {
+            todo!();
         }
     }
 }
