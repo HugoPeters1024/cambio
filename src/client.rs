@@ -8,7 +8,7 @@ use bevy_renet::{
 };
 
 use crate::{
-    cambio::{CambioAction, CambioPlayerState, CambioState, CardId},
+    cambio::{CambioAction, CambioPlayerState, CambioState, CardId, IsHeldBy},
     cards::Card,
     messages::*,
 };
@@ -123,8 +123,18 @@ fn client_sync_players(
 
                 state.game.players.insert(client_id, player_entity);
             }
-            ServerMessage::PlayerDisconnected { id } => {
-                println!("Player {} disconnected.", id);
+            ServerMessage::PlayerDisconnected { client_id } => {
+                println!("Player {} disconnected.", client_id);
+            }
+            ServerMessage::StateUpdate { client_id, action } => {
+                println!("Got verified claim that {} did {:?}", client_id, action);
+                let claimer = state.game.players.get(&client_id).unwrap();
+                match action {
+                    CambioAction::PickUpCard { card } => {
+                        let card_entity = state.game.get_card(card);
+                        commands.entity(card_entity).insert(IsHeldBy(*claimer));
+                    }
+                }
             }
         }
     }

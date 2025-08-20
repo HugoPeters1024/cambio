@@ -126,7 +126,7 @@ fn server_update_system(
                 println!("Player {} disconnected: {}", client_id, reason);
                 state.game.players.remove(client_id);
                 server
-                    .broadcast_message_typed(ServerMessage::PlayerDisconnected { id: *client_id });
+                    .broadcast_message_typed(ServerMessage::PlayerDisconnected { client_id: *client_id });
             }
         }
     }
@@ -152,6 +152,10 @@ fn server_update_system(
                     let held_by = held.get(card_entity);
                     if held_by.is_err() {
                         commands.entity(card_entity).insert(IsHeldBy(*claimer));
+                        server.broadcast_message_typed(ServerMessage::StateUpdate {
+                            client_id,
+                            action: claim,
+                        });
                     }
                 }
             }

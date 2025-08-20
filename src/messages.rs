@@ -2,12 +2,16 @@ use bevy::prelude::*;
 use bevy_renet::renet::ClientId;
 use serde::{Deserialize, Serialize};
 
-use crate::cambio::PlayerId;
+use crate::cambio::{CambioAction, PlayerId};
 
 #[derive(Debug, Serialize, Deserialize, Component)]
 pub enum ServerMessage {
     PlayerConnected { client_id: ClientId, player_idx: PlayerId },
-    PlayerDisconnected { id: ClientId },
+    PlayerDisconnected { client_id: ClientId },
+    StateUpdate {
+        client_id: ClientId,
+        action: CambioAction,
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Component)]
