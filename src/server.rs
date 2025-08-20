@@ -7,6 +7,8 @@ use bevy_renet::{
     renet::{ClientId, ConnectionConfig, DefaultChannel, RenetServer, ServerEvent},
 };
 
+use crate::cambio::*;
+use crate::cards::*;
 use crate::messages::*;
 
 trait ServerExt {
@@ -27,15 +29,9 @@ impl ServerExt for RenetServer {
     }
 }
 
-#[derive(Debug)]
-struct PlayerState {
-    player_idx: usize,
-    mouse_pos: Vec2,
-}
-
-#[derive(Default, Resource)]
+#[derive(Resource)]
 struct ServerState {
-    players: HashMap<ClientId, PlayerState>,
+    game: CambioState,
 }
 
 pub struct ServerPlugin;
@@ -47,9 +43,17 @@ impl Plugin for ServerPlugin {
         let (server, transport) = new_renet_server();
         app.insert_resource(server);
         app.insert_resource(transport);
-        app.init_resource::<ServerState>();
 
-        app.add_systems(Update, (server_update_system, server_sync_clients).chain());
+        let table_card = app.world_mut().spawn(Card::default()).id();
+
+        app.insert_resource(ServerState {
+            game: CambioState {
+                table_card,
+                players: HashMap::default(),
+            },
+        });
+
+        app.add_systems(Update, (server_update_system).chain());
     }
 }
 
@@ -75,9 +79,12 @@ fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
 }
 
 fn server_update_system(
+    mut commands: Commands,
     mut server_events: EventReader<ServerEvent>,
     mut server: ResMut<RenetServer>,
     mut state: ResMut<ServerState>,
+    players: Query<&CambioPlayerState>,
+    held: Query<&IsHeldBy>,
     mut player_seq: Local<usize>,
 ) {
     for event in server_events.read() {
@@ -85,37 +92,39 @@ fn server_update_system(
             ServerEvent::ClientConnected { client_id } => {
                 println!("Player {} connected.", client_id);
 
-
                 // We could send an InitState with all the players id and positions for the client
                 // but this is easier to do.
-                for (&existing_client, player) in state.players.iter() {
+                for (&existing_client, player) in state.game.players.iter() {
+                    let player = players.get(*player).expect("Player has no PlayerState");
                     server.send_message_typed(
                         *client_id,
                         ServerMessage::PlayerConnected {
-                            id: existing_client,
-                            player_idx: player.player_idx,
+                            client_id: existing_client,
+                            player_idx: player.player_id,
                         },
                     );
                 }
 
                 *player_seq += 1;
                 let new_player_idx = *player_seq;
-                state.players.insert(
-                    *client_id,
-                    PlayerState {
-                        player_idx: new_player_idx,
-                        mouse_pos: Vec2::ZERO,
-                    },
-                );
-                server.broadcast_message_typed(ServerMessage::PlayerConnected {
-                    id: *client_id,
-                    player_idx: new_player_idx,
-                });
 
+                let new_player = commands
+                    .spawn(CambioPlayerState {
+                        player_id: PlayerId(new_player_idx),
+                        cards: vec![],
+                    })
+                    .id();
+
+                state.game.players.insert(*client_id, new_player);
+
+                server.broadcast_message_typed(ServerMessage::PlayerConnected {
+                    client_id: *client_id,
+                    player_idx: PlayerId(new_player_idx),
+                });
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 println!("Player {} disconnected: {}", client_id, reason);
-                state.players.remove(client_id);
+                state.game.players.remove(client_id);
                 server
                     .broadcast_message_typed(ServerMessage::PlayerDisconnected { id: *client_id });
             }
@@ -125,12 +134,27 @@ fn server_update_system(
     for client_id in server.clients_id() {
         while let Some(message) = server.receive_message(client_id, DefaultChannel::ReliableOrdered)
         {
-            let claim: ClientClaim =
+            let Some(claimer) = state.game.players.get(&client_id) else {
+                // Ignore messages from unknown clients
+                println!("Got message from unknown client: {}", client_id);
+                continue;
+            };
+
+            let claim: CambioAction =
                 bincode::serde::decode_from_slice(&message, bincode::config::standard())
                     .unwrap()
                     .0;
             println!("Got claim from {}: {:?}", client_id, claim);
-            handle_claim(&client_id, &claim, &mut state, &mut server);
+
+            match claim {
+                CambioAction::PickUpCard { card } => {
+                    let card_entity = state.game.get_card(card);
+                    let held_by = held.get(card_entity);
+                    if held_by.is_err() {
+                        commands.entity(card_entity).insert(IsHeldBy(*claimer));
+                    }
+                }
+            }
         }
     }
 
@@ -142,39 +166,11 @@ fn server_update_system(
                     .0;
             match claim {
                 ClientClaimUnreliable::MousePosition(vec2) => {
-                    state.players.entry(client_id).and_modify(|player_state| {
-                        player_state.mouse_pos = vec2;
-                    });
+                    //state.players.entry(client_id).and_modify(|player_state| {
+                    //    player_state.mouse_pos = vec2;
+                    //});
                 }
             }
-        }
-    }
-}
-
-fn server_sync_clients(mut server: ResMut<RenetServer>, state: Res<ServerState>) {
-    let message = ServerMessageUnreliable::MousePositions(
-        state
-            .players
-            .iter()
-            .map(|(id, state)| (*id, state.mouse_pos))
-            .collect(),
-    );
-    let message = bincode::serde::encode_to_vec(&message, bincode::config::standard()).unwrap();
-    server.broadcast_message(DefaultChannel::Unreliable, message);
-}
-
-fn handle_claim(
-    client_id: &ClientId,
-    claim: &ClientClaim,
-    state: &mut ServerState,
-    server: &mut RenetServer,
-) {
-    match claim {
-        ClientClaim::ClickCard {
-            card_ref,
-            mouse_pos,
-        } => {
-            todo!();
         }
     }
 }

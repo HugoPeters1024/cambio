@@ -8,19 +8,19 @@ use bevy_renet::{
 };
 
 use crate::{
-    cambio::{CambioPlayerState, CambioState},
+    cambio::{CambioAction, CambioPlayerState, CambioState, CardId},
     cards::Card,
     messages::*,
 };
 
 pub trait ClientExt {
-    fn send_claim(&mut self, claim: ClientClaim);
+    fn send_claim(&mut self, claim: CambioAction);
 
     fn send_claim_unreliable(&mut self, claim: ClientClaimUnreliable);
 }
 
 impl ClientExt for RenetClient {
-    fn send_claim(&mut self, claim: ClientClaim) {
+    fn send_claim(&mut self, claim: CambioAction) {
         let encoded = bincode::serde::encode_to_vec(&claim, bincode::config::standard()).unwrap();
         self.send_message(DefaultChannel::ReliableOrdered, encoded);
     }
@@ -31,15 +31,10 @@ impl ClientExt for RenetClient {
     }
 }
 
-pub struct PlayerState {
-    pub player_idx: usize,
-    pub mouse_pos: Vec2,
-}
-
 #[derive(Resource)]
 pub struct ClientState {
-    pub me: ClientId,
-    pub players: HashMap<ClientId, PlayerState>,
+    pub client_id: ClientId,
+    pub me: Option<Entity>,
     pub game: CambioState,
 }
 
@@ -50,27 +45,30 @@ impl Plugin for ClientPlugin {
         app.add_plugins(RenetClientPlugin);
         app.add_plugins(NetcodeClientPlugin);
         let (client, transport) = new_renet_client();
-        let me = transport.client_id();
+        let client_id = transport.client_id();
         app.insert_resource(client);
         app.insert_resource(transport);
 
-        let table_card = app.world_mut().spawn(Card::default()).id();
-
-        app.insert_resource(ClientState {
-            me,
-            players: HashMap::default(),
-            game: CambioState {
-                table_card,
-                players: vec![],
-            },
-        });
+        let initial_state = init_state(client_id, app.world_mut());
+        app.insert_resource(initial_state);
 
         app.add_systems(
             PreUpdate,
             (client_sync_players, publish_cursor).run_if(client_connected),
         );
-        app.add_systems(Update, sync_render);
     }
+}
+
+fn init_state(client_id: ClientId, world: &mut World) -> ClientState {
+    let table_card = world.spawn((Card::default(), CardId::StackCard)).id();
+    return ClientState {
+        me: None,
+        client_id,
+        game: CambioState {
+            table_card,
+            players: HashMap::default(),
+        },
+    };
 }
 
 fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
@@ -105,26 +103,25 @@ fn client_sync_players(
                 .unwrap()
                 .0;
         match server_message {
-            ServerMessage::PlayerConnected { id, player_idx } => {
-                println!("Player {} connected.", player_idx);
-
-                state.players.insert(
-                    id,
-                    PlayerState {
-                        mouse_pos: Vec2::ZERO,
-                        player_idx,
-                    },
-                );
-
-                let card_entity = commands.spawn(Card::default()).id();
+            ServerMessage::PlayerConnected {
+                client_id,
+                player_idx: player_id,
+            } => {
+                println!("Player {} connected.", player_id.0);
 
                 let player_entity = commands
                     .spawn(CambioPlayerState {
-                        cards: vec![card_entity],
+                        cards: vec![],
+                        player_id,
                     })
-                    .add_child(card_entity)
                     .id();
-                state.game.players.push(player_entity);
+
+                if client_id == state.client_id {
+                    debug_assert!(state.me.is_none(), "There can only be one me");
+                    state.me = Some(player_entity);
+                }
+
+                state.game.players.insert(client_id, player_entity);
             }
             ServerMessage::PlayerDisconnected { id } => {
                 println!("Player {} disconnected.", id);
@@ -137,15 +134,7 @@ fn client_sync_players(
             bincode::serde::decode_from_slice(&message, bincode::config::standard())
                 .unwrap()
                 .0;
-        match message {
-            ServerMessageUnreliable::MousePositions(hash_map) => {
-                for (client_id, cpos) in hash_map.iter() {
-                    if let Some(player_state) = state.players.get_mut(client_id) {
-                        player_state.mouse_pos = *cpos;
-                    }
-                }
-            }
-        }
+        match message {}
     }
 }
 
@@ -157,16 +146,6 @@ fn publish_cursor(
     if let Some(cpos) = window.cursor_position() {
         if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, cpos) {
             client.send_claim_unreliable(ClientClaimUnreliable::MousePosition(world_pos));
-        }
-    }
-}
-
-fn sync_render(state: Res<ClientState>, mut query: Query<(&mut Transform, &CambioPlayerState)>) {
-    // layout the players in a square
-    for (idx, player) in state.game.players.iter().enumerate() {
-        if let Ok((mut transform, _)) = query.get_mut(*player) {
-            transform.translation.x = (idx % 2) as f32 * 100.0;
-            transform.translation.y = (idx / 2) as f32 * 100.0;
         }
     }
 }

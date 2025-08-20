@@ -1,26 +1,17 @@
-use bevy::{platform::collections::HashMap, prelude::*};
+use bevy::prelude::*;
 use bevy_renet::renet::ClientId;
 use serde::{Deserialize, Serialize};
 
-use crate::cards::CardRef;
+use crate::cambio::PlayerId;
 
 #[derive(Debug, Serialize, Deserialize, Component)]
 pub enum ServerMessage {
-    PlayerConnected { id: ClientId, player_idx: usize },
+    PlayerConnected { client_id: ClientId, player_idx: PlayerId },
     PlayerDisconnected { id: ClientId },
 }
 
 #[derive(Debug, Serialize, Deserialize, Component)]
 pub enum ServerMessageUnreliable {
-    MousePositions(HashMap<ClientId, Vec2>),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum ClientClaim {
-    ClickCard {
-        card_ref: CardRef,
-        mouse_pos: Vec2,
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

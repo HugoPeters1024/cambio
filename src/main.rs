@@ -12,6 +12,7 @@ mod messages;
 mod server;
 
 use crate::assets::*;
+use crate::cambio::CambioPlayerState;
 use crate::cards::*;
 use crate::client::ClientPlugin;
 use crate::client::ClientState;
@@ -81,12 +82,12 @@ fn setup(mut commands: Commands) {
 
 fn update_player_idx_text(
     state: Res<ClientState>,
-    mut query: Query<&mut Text, With<PlayerIdxText>>,
+    player_ids: Query<&CambioPlayerState>,
+    mut text: Single<&mut Text, With<PlayerIdxText>>,
 ) {
-    for mut text in query.iter_mut() {
-        if let Some(me) = state.players.get(&state.me) {
-            text.0 = format!("You are player: {}", me.player_idx);
-        }
+    let Some(me) = state.me else { return };
+    if let Ok(me) = player_ids.get(me) {
+        text.0 = format!("You are player: {}", *me.player_id);
     }
 }
 

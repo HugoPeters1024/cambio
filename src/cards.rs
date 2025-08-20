@@ -1,12 +1,9 @@
 use bevy::{picking::hover::PickingInteraction, prelude::*};
-use bevy_renet::renet::{ClientId, RenetClient};
-use serde::{Deserialize, Serialize};
+use bevy_renet::renet::RenetClient;
 
 use crate::assets::*;
-use crate::{
-    client::ClientExt,
-    messages::ClientClaim,
-};
+use crate::cambio::{CambioAction, CardId};
+use crate::client::ClientExt;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub enum Suit {
@@ -33,12 +30,6 @@ pub enum Rank {
     Jack,
     Queen,
     King,
-}
-
-// TODO(this needs to specify and index for a specific card in the game)
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Component)]
-pub struct CardRef {
-    pub client_id: ClientId,
 }
 
 #[derive(Debug, Component, PartialEq, Eq, Clone, Copy, Default)]
@@ -94,18 +85,17 @@ fn sync_sprite_with_card(mut q: Query<(&mut Sprite, &Card)>) {
 
 fn select_card(
     trigger: Trigger<Pointer<Click>>,
-    refs: Query<&CardRef, With<Card>>,
+    cards: Query<&CardId>,
     mut client: ResMut<RenetClient>,
     camera: Single<(&Camera, &GlobalTransform)>,
 ) {
-    if let Ok(card_ref) = refs.get(trigger.target) {
+    if let Ok(card) = cards.get(trigger.target) {
         if let Ok(world_pos) = camera
             .0
             .viewport_to_world_2d(camera.1, trigger.event().pointer_location.position)
         {
-            let claim = ClientClaim::ClickCard {
-                card_ref: *card_ref,
-                mouse_pos: world_pos,
+            let claim = CambioAction::PickUpCard {
+                card: *card,
             };
             client.send_claim(claim);
         }
