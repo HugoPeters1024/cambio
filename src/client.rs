@@ -7,11 +7,9 @@ use bevy_renet::{
     renet::{ClientId, ConnectionConfig, DefaultChannel, RenetClient},
 };
 
-use crate::{
-    cambio::{CambioAction, CambioPlayerState, CambioState, CardId, IsHeldBy},
-    cards::Card,
-    messages::*,
-};
+use crate::cambio::*;
+use crate::cards::*;
+use crate::messages::*;
 
 pub trait ClientExt {
     fn send_claim(&mut self, claim: CambioAction);
@@ -53,11 +51,7 @@ impl Plugin for ClientPlugin {
 
         app.add_systems(
             PreUpdate,
-            (
-                client_sync_players,
-                (set_cursor_position, publish_cursor).chain(),
-            )
-                .run_if(client_connected),
+            (client_sync_players, set_and_publish_cursor_position.chain()).run_if(client_connected),
         );
 
         app.add_systems(Update, sync_held_by);
@@ -65,7 +59,10 @@ impl Plugin for ClientPlugin {
 }
 
 fn init_state(client_id: ClientId, world: &mut World) -> ClientState {
-    let table_card = world.spawn((Card::default(), CardId::StackCard)).id();
+    let table_card = world
+        .spawn((SomeCard::default(), CardId::StackCard))
+        .observe(click_card)
+        .id();
     return ClientState {
         client_id,
         game: CambioState {
@@ -169,7 +166,8 @@ fn client_sync_players(
     }
 }
 
-fn set_cursor_position(
+fn set_and_publish_cursor_position(
+    mut client: ResMut<RenetClient>,
     state: ResMut<ClientState>,
     mut players: Query<&mut CambioPlayerState>,
     window: Single<&Window, With<PrimaryWindow>>,
@@ -182,19 +180,8 @@ fn set_cursor_position(
         if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, cpos) {
             if let Ok(mut player_state) = players.get_mut(*me) {
                 player_state.last_mouse_pos_world = world_pos;
+                client.send_claim_unreliable(ClientClaimUnreliable::MousePosition(world_pos));
             }
-        }
-    }
-}
-
-fn publish_cursor(
-    window: Single<&Window, With<PrimaryWindow>>,
-    mut client: ResMut<RenetClient>,
-    camera: Single<(&Camera, &GlobalTransform)>,
-) {
-    if let Some(cpos) = window.cursor_position() {
-        if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, cpos) {
-            client.send_claim_unreliable(ClientClaimUnreliable::MousePosition(world_pos));
         }
     }
 }
@@ -209,6 +196,23 @@ fn sync_held_by(
             if let Ok(player_state) = players.get(*player_entity) {
                 transform.translation = player_state.last_mouse_pos_world.extend(0.0);
             }
+        }
+    }
+}
+
+fn click_card(
+    trigger: Trigger<Pointer<Click>>,
+    cards: Query<&CardId>,
+    held: Query<&IsHeldBy>,
+    mut client: ResMut<RenetClient>,
+) {
+    if client.is_disconnected() {
+        return;
+    }
+    if let Ok(card) = cards.get(trigger.target) {
+        if !held.contains(trigger.target) {
+            let claim = CambioAction::PickUpCard { card: *card };
+            client.send_claim(claim);
         }
     }
 }

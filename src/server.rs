@@ -44,7 +44,7 @@ impl Plugin for ServerPlugin {
         app.insert_resource(server);
         app.insert_resource(transport);
 
-        let table_card = app.world_mut().spawn(Card::default()).id();
+        let table_card = app.world_mut().spawn(KnownCard::default()).id();
 
         app.insert_resource(ServerState {
             game: CambioState {
@@ -152,8 +152,7 @@ fn server_update_system(
             match claim {
                 CambioAction::PickUpCard { card } => {
                     let card_entity = state.game.get_card(card);
-                    let held_by = held.get(card_entity);
-                    if held_by.is_err() {
+                    if !held.contains(card_entity) {
                         commands.entity(card_entity).insert(IsHeldBy(claimer_id));
                         server.broadcast_message_typed(ServerMessage::StateUpdate {
                             claimer_id,
