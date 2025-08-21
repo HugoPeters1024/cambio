@@ -16,10 +16,9 @@ pub enum CardId {
 
 #[derive(Component)]
 #[require(Transform, InheritedVisibility)]
-pub struct CambioPlayerState {
+pub struct PlayerState {
     pub last_mouse_pos_world: Vec2,
     pub player_id: PlayerId,
-    pub cards: Vec<Entity>,
 }
 
 pub struct CambioState {

@@ -12,7 +12,7 @@ mod messages;
 mod server;
 
 use crate::assets::*;
-use crate::cambio::CambioPlayerState;
+use crate::cambio::PlayerState;
 use crate::cards::*;
 use crate::client::ClientPlugin;
 use crate::client::ClientState;
@@ -46,6 +46,8 @@ fn main() {
             }),
             ..default()
         }));
+
+        //app.add_plugins(bevy_editor_pls::EditorPlugin::new());
 
         // Because we doing networking, there might be updates to the game
         // even when the window is not in focus, so we should ensure our update
@@ -82,7 +84,7 @@ fn setup(mut commands: Commands) {
 
 fn update_player_idx_text(
     state: Res<ClientState>,
-    player_ids: Query<&CambioPlayerState>,
+    player_ids: Query<&PlayerState>,
     mut text: Single<&mut Text, With<PlayerIdxText>>,
 ) {
     let Some(me) = state.game.players.get(&state.client_id) else {

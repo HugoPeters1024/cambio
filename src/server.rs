@@ -83,7 +83,7 @@ fn server_update_system(
     mut server_events: EventReader<ServerEvent>,
     mut server: ResMut<RenetServer>,
     mut state: ResMut<ServerState>,
-    mut players: Query<&mut CambioPlayerState>,
+    mut players: Query<&mut PlayerState>,
     held: Query<&IsHeldBy>,
     mut player_seq: Local<usize>,
 ) {
@@ -109,10 +109,9 @@ fn server_update_system(
                 let new_player_idx = *player_seq;
 
                 let new_player = commands
-                    .spawn(CambioPlayerState {
+                    .spawn(PlayerState {
                         last_mouse_pos_world: Vec2::ZERO,
                         player_id: PlayerId(new_player_idx),
-                        cards: vec![],
                     })
                     .id();
 

@@ -60,9 +60,14 @@ impl Plugin for ClientPlugin {
 
 fn init_state(client_id: ClientId, world: &mut World) -> ClientState {
     let table_card = world
-        .spawn((SomeCard::default(), CardId::StackCard))
+        .spawn((
+            SomeCard::default(),
+            CardId::StackCard,
+            Name::new("Table Card"),
+        ))
         .observe(click_card)
         .id();
+
     return ClientState {
         client_id,
         game: CambioState {
@@ -97,7 +102,7 @@ fn client_sync_players(
     mut commands: Commands,
     mut client: ResMut<RenetClient>,
     mut state: ResMut<ClientState>,
-    mut players: Query<&mut CambioPlayerState>,
+    mut players: Query<&mut PlayerState>,
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
         let server_message =
@@ -116,10 +121,24 @@ fn client_sync_players(
                 );
 
                 let player_entity = commands
-                    .spawn(CambioPlayerState {
-                        last_mouse_pos_world: Vec2::ZERO,
-                        cards: vec![],
-                        player_id,
+                    .spawn((
+                        PlayerState {
+                            last_mouse_pos_world: Vec2::ZERO,
+                            player_id,
+                        },
+                    ))
+                    .with_children(|parent| {
+                        //parent
+                        //    .spawn((CardSlot, Transform::from_xyz(0.0, 0.0, 0.0)))
+                        //    .observe(click_slot);
+                        //parent
+                        //    .spawn((
+                        //        CardSlot,
+                        //        Transform::from_xyz(100.0, 0.0, 0.0),
+                        //        Name::new("Slot 2"),
+                        //    ))
+                        //    .observe(click_slot)
+                        //    .with_children(|parent| {});
                     })
                     .id();
 
@@ -169,17 +188,15 @@ fn client_sync_players(
 fn set_and_publish_cursor_position(
     mut client: ResMut<RenetClient>,
     state: ResMut<ClientState>,
-    mut players: Query<&mut CambioPlayerState>,
+    mut players: Query<&mut PlayerState>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform)>,
 ) {
-    let Some(me) = state.game.players.get(&state.client_id) else {
-        return;
-    };
+    let me = state.game.players.get(&state.client_id).unwrap();
     if let Some(cpos) = window.cursor_position() {
         if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, cpos) {
-            if let Ok(mut player_state) = players.get_mut(*me) {
-                player_state.last_mouse_pos_world = world_pos;
+            if let Ok(mut me) = players.get_mut(*me) {
+                me.last_mouse_pos_world = world_pos;
                 client.send_claim_unreliable(ClientClaimUnreliable::MousePosition(world_pos));
             }
         }
@@ -189,12 +206,13 @@ fn set_and_publish_cursor_position(
 fn sync_held_by(
     state: Res<ClientState>,
     mut held: Query<(&mut Transform, &IsHeldBy)>,
-    players: Query<&CambioPlayerState>,
+    players: Query<&PlayerState>,
 ) {
     for (mut transform, held_by) in held.iter_mut() {
         if let Some(player_entity) = state.game.players.get(&held_by.0) {
             if let Ok(player_state) = players.get(*player_entity) {
-                transform.translation = player_state.last_mouse_pos_world.extend(0.0);
+                transform.translation.x = player_state.last_mouse_pos_world.x;
+                transform.translation.y = player_state.last_mouse_pos_world.y;
             }
         }
     }
@@ -206,13 +224,25 @@ fn click_card(
     held: Query<&IsHeldBy>,
     mut client: ResMut<RenetClient>,
 ) {
-    if client.is_disconnected() {
-        return;
-    }
     if let Ok(card) = cards.get(trigger.target) {
         if !held.contains(trigger.target) {
             let claim = CambioAction::PickUpCard { card: *card };
             client.send_claim(claim);
+        } else {
+            println!("Card already held");
+        }
+    }
+}
+
+fn click_slot(
+    mut trigger: Trigger<Pointer<Click>>,
+    slots: Query<&CardSlot>,
+    held: Query<&IsHeldBy>,
+    mut client: ResMut<RenetClient>,
+) {
+    if let Ok(slot) = slots.get(trigger.target) {
+        if !held.is_empty() {
+            println!("Clicked slot");
         }
     }
 }
