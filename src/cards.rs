@@ -87,17 +87,9 @@ fn select_card(
     trigger: Trigger<Pointer<Click>>,
     cards: Query<&CardId>,
     mut client: ResMut<RenetClient>,
-    camera: Single<(&Camera, &GlobalTransform)>,
 ) {
     if let Ok(card) = cards.get(trigger.target) {
-        if let Ok(world_pos) = camera
-            .0
-            .viewport_to_world_2d(camera.1, trigger.event().pointer_location.position)
-        {
-            let claim = CambioAction::PickUpCard {
-                card: *card,
-            };
-            client.send_claim(claim);
-        }
+        let claim = CambioAction::PickUpCard { card: *card };
+        client.send_claim(claim);
     }
 }

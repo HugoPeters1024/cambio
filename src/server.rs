@@ -83,7 +83,7 @@ fn server_update_system(
     mut server_events: EventReader<ServerEvent>,
     mut server: ResMut<RenetServer>,
     mut state: ResMut<ServerState>,
-    players: Query<&CambioPlayerState>,
+    mut players: Query<&mut CambioPlayerState>,
     held: Query<&IsHeldBy>,
     mut player_seq: Local<usize>,
 ) {
@@ -110,6 +110,7 @@ fn server_update_system(
 
                 let new_player = commands
                     .spawn(CambioPlayerState {
+                        last_mouse_pos_world: Vec2::ZERO,
                         player_id: PlayerId(new_player_idx),
                         cards: vec![],
                     })
@@ -125,18 +126,20 @@ fn server_update_system(
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 println!("Player {} disconnected: {}", client_id, reason);
                 state.game.players.remove(client_id);
-                server
-                    .broadcast_message_typed(ServerMessage::PlayerDisconnected { client_id: *client_id });
+                server.broadcast_message_typed(ServerMessage::PlayerDisconnected {
+                    client_id: *client_id,
+                });
             }
         }
     }
 
-    for client_id in server.clients_id() {
-        while let Some(message) = server.receive_message(client_id, DefaultChannel::ReliableOrdered)
+    for claimer_id in server.clients_id() {
+        while let Some(message) =
+            server.receive_message(claimer_id, DefaultChannel::ReliableOrdered)
         {
-            let Some(claimer) = state.game.players.get(&client_id) else {
+            let Some(_) = state.game.players.get(&claimer_id) else {
                 // Ignore messages from unknown clients
-                println!("Got message from unknown client: {}", client_id);
+                error!("Got message from unknown client: {}", claimer_id);
                 continue;
             };
 
@@ -144,16 +147,16 @@ fn server_update_system(
                 bincode::serde::decode_from_slice(&message, bincode::config::standard())
                     .unwrap()
                     .0;
-            println!("Got claim from {}: {:?}", client_id, claim);
+            println!("Got claim from {}: {:?}", claimer_id, claim);
 
             match claim {
                 CambioAction::PickUpCard { card } => {
                     let card_entity = state.game.get_card(card);
                     let held_by = held.get(card_entity);
                     if held_by.is_err() {
-                        commands.entity(card_entity).insert(IsHeldBy(*claimer));
+                        commands.entity(card_entity).insert(IsHeldBy(claimer_id));
                         server.broadcast_message_typed(ServerMessage::StateUpdate {
-                            client_id,
+                            claimer_id,
                             action: claim,
                         });
                     }
@@ -163,18 +166,45 @@ fn server_update_system(
     }
 
     for client_id in server.clients_id() {
+        if !state.game.players.contains_key(&client_id) {
+            // Ignore messages from unknown clients
+            error!("Got message from unknown client: {}", client_id);
+            continue;
+        }
+
+        error!("Got message from client: {}", client_id);
+
         while let Some(message) = server.receive_message(client_id, DefaultChannel::Unreliable) {
             let claim: ClientClaimUnreliable =
                 bincode::serde::decode_from_slice(&message, bincode::config::standard())
                     .unwrap()
                     .0;
             match claim {
-                ClientClaimUnreliable::MousePosition(vec2) => {
-                    //state.players.entry(client_id).and_modify(|player_state| {
-                    //    player_state.mouse_pos = vec2;
-                    //});
+                ClientClaimUnreliable::MousePosition(mouse_pos) => {
+                    if let Ok(mut player_state) = players.get_mut(state.game.players[&client_id]) {
+                        player_state.last_mouse_pos_world = mouse_pos;
+                    }
                 }
             }
         }
     }
+
+    let mouse_update = ServerMessageUnreliable::MousePositions(
+        state
+            .game
+            .players
+            .iter()
+            .filter_map(|(&id, player)| {
+                players
+                    .get(*player)
+                    .ok()
+                    .map(|p| (id, p.last_mouse_pos_world))
+            })
+            .collect(),
+    );
+
+    server.broadcast_message(
+        DefaultChannel::Unreliable,
+        bincode::serde::encode_to_vec(mouse_update, bincode::config::standard()).unwrap(),
+    );
 }

@@ -85,8 +85,10 @@ fn update_player_idx_text(
     player_ids: Query<&CambioPlayerState>,
     mut text: Single<&mut Text, With<PlayerIdxText>>,
 ) {
-    let Some(me) = state.me else { return };
-    if let Ok(me) = player_ids.get(me) {
+    let Some(me) = state.game.players.get(&state.client_id) else {
+        return;
+    };
+    if let Ok(me) = player_ids.get(*me) {
         text.0 = format!("You are player: {}", *me.player_id);
     }
 }

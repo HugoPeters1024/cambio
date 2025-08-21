@@ -34,7 +34,6 @@ impl ClientExt for RenetClient {
 #[derive(Resource)]
 pub struct ClientState {
     pub client_id: ClientId,
-    pub me: Option<Entity>,
     pub game: CambioState,
 }
 
@@ -54,15 +53,20 @@ impl Plugin for ClientPlugin {
 
         app.add_systems(
             PreUpdate,
-            (client_sync_players, publish_cursor).run_if(client_connected),
+            (
+                client_sync_players,
+                (set_cursor_position, publish_cursor).chain(),
+            )
+                .run_if(client_connected),
         );
+
+        app.add_systems(Update, sync_held_by);
     }
 }
 
 fn init_state(client_id: ClientId, world: &mut World) -> ClientState {
     let table_card = world.spawn((Card::default(), CardId::StackCard)).id();
     return ClientState {
-        me: None,
         client_id,
         game: CambioState {
             table_card,
@@ -96,6 +100,7 @@ fn client_sync_players(
     mut commands: Commands,
     mut client: ResMut<RenetClient>,
     mut state: ResMut<ClientState>,
+    mut players: Query<&mut CambioPlayerState>,
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
         let server_message =
@@ -108,31 +113,33 @@ fn client_sync_players(
                 player_idx: player_id,
             } => {
                 println!("Player {} connected.", player_id.0);
+                debug_assert!(
+                    !state.game.players.contains_key(&client_id),
+                    "There can only be one player per client",
+                );
 
                 let player_entity = commands
                     .spawn(CambioPlayerState {
+                        last_mouse_pos_world: Vec2::ZERO,
                         cards: vec![],
                         player_id,
                     })
                     .id();
-
-                if client_id == state.client_id {
-                    debug_assert!(state.me.is_none(), "There can only be one me");
-                    state.me = Some(player_entity);
-                }
 
                 state.game.players.insert(client_id, player_entity);
             }
             ServerMessage::PlayerDisconnected { client_id } => {
                 println!("Player {} disconnected.", client_id);
             }
-            ServerMessage::StateUpdate { client_id, action } => {
+            ServerMessage::StateUpdate {
+                claimer_id: client_id,
+                action,
+            } => {
                 println!("Got verified claim that {} did {:?}", client_id, action);
-                let claimer = state.game.players.get(&client_id).unwrap();
                 match action {
                     CambioAction::PickUpCard { card } => {
                         let card_entity = state.game.get_card(card);
-                        commands.entity(card_entity).insert(IsHeldBy(*claimer));
+                        commands.entity(card_entity).insert(IsHeldBy(client_id));
                     }
                 }
             }
@@ -144,7 +151,39 @@ fn client_sync_players(
             bincode::serde::decode_from_slice(&message, bincode::config::standard())
                 .unwrap()
                 .0;
-        match message {}
+        match message {
+            ServerMessageUnreliable::MousePositions(items) => {
+                for (client_id, mouse_pos) in items {
+                    if state.client_id == client_id {
+                        // We use the local mouse position to reduce
+                        // visual latency
+                        continue;
+                    }
+
+                    if let Ok(mut player_state) = players.get_mut(state.game.players[&client_id]) {
+                        player_state.last_mouse_pos_world = mouse_pos;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn set_cursor_position(
+    state: ResMut<ClientState>,
+    mut players: Query<&mut CambioPlayerState>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    camera: Single<(&Camera, &GlobalTransform)>,
+) {
+    let Some(me) = state.game.players.get(&state.client_id) else {
+        return;
+    };
+    if let Some(cpos) = window.cursor_position() {
+        if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, cpos) {
+            if let Ok(mut player_state) = players.get_mut(*me) {
+                player_state.last_mouse_pos_world = world_pos;
+            }
+        }
     }
 }
 
@@ -156,6 +195,20 @@ fn publish_cursor(
     if let Some(cpos) = window.cursor_position() {
         if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, cpos) {
             client.send_claim_unreliable(ClientClaimUnreliable::MousePosition(world_pos));
+        }
+    }
+}
+
+fn sync_held_by(
+    state: Res<ClientState>,
+    mut held: Query<(&mut Transform, &IsHeldBy)>,
+    players: Query<&CambioPlayerState>,
+) {
+    for (mut transform, held_by) in held.iter_mut() {
+        if let Some(player_entity) = state.game.players.get(&held_by.0) {
+            if let Ok(player_state) = players.get(*player_entity) {
+                transform.translation = player_state.last_mouse_pos_world.extend(0.0);
+            }
         }
     }
 }

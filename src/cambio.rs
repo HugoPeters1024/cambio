@@ -5,9 +5,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Deref, Debug, Serialize, Deserialize, Clone, Copy)]
 pub struct PlayerId(pub usize);
 
-// TODO: use component hooks to enforce that this actually targets a player?
 #[derive(Component)]
-pub struct IsHeldBy(pub Entity);
+pub struct IsHeldBy(pub ClientId);
 
 #[derive(Debug, Serialize, Deserialize, Component, Clone, Copy)]
 pub enum CardId {
@@ -15,10 +14,10 @@ pub enum CardId {
     StackCard,
 }
 
-
 #[derive(Component)]
 #[require(Transform, InheritedVisibility)]
 pub struct CambioPlayerState {
+    pub last_mouse_pos_world: Vec2,
     pub player_id: PlayerId,
     pub cards: Vec<Entity>,
 }
