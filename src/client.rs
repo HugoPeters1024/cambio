@@ -126,19 +126,36 @@ fn client_sync_players(
                             last_mouse_pos_world: Vec2::ZERO,
                             player_id,
                         },
+                        Transform::from_xyz(0.0, -150.0, 0.0),
+                        InheritedVisibility::default(),
+                        Name::new(format!("Player {}", player_id.0)),
+                        Pickable::default(),
                     ))
                     .with_children(|parent| {
-                        //parent
-                        //    .spawn((CardSlot, Transform::from_xyz(0.0, 0.0, 0.0)))
-                        //    .observe(click_slot);
-                        //parent
-                        //    .spawn((
-                        //        CardSlot,
-                        //        Transform::from_xyz(100.0, 0.0, 0.0),
-                        //        Name::new("Slot 2"),
-                        //    ))
-                        //    .observe(click_slot)
-                        //    .with_children(|parent| {});
+                        parent
+                            .spawn((
+                                CardSlot,
+                                Transform::from_xyz(0.0, 0.0, 0.0),
+                                Name::new("The Slot"),
+                            ))
+                            .observe(click_slot);
+
+                        parent
+                            .spawn((
+                                CardSlot,
+                                Transform::from_xyz(100.0, 0.0, 0.0),
+                                Name::new("The Slot"),
+                            ))
+                            .observe(click_slot)
+                            .with_children(|parent| {
+                                parent
+                                    .spawn((
+                                        SomeCard,
+                                        Transform::from_xyz(10.0, 10.0, 1.0),
+                                        Name::new("The Card"),
+                                    ))
+                                    .observe(click_card);
+                            });
                     })
                     .id();
 
@@ -192,7 +209,9 @@ fn set_and_publish_cursor_position(
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform)>,
 ) {
-    let me = state.game.players.get(&state.client_id).unwrap();
+    let Some(me) = state.game.players.get(&state.client_id) else {
+        return;
+    };
     if let Some(cpos) = window.cursor_position() {
         if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, cpos) {
             if let Ok(mut me) = players.get_mut(*me) {
@@ -224,8 +243,9 @@ fn click_card(
     held: Query<&IsHeldBy>,
     mut client: ResMut<RenetClient>,
 ) {
-    if let Ok(card) = cards.get(trigger.target) {
-        if !held.contains(trigger.target) {
+    println!("Clicked card");
+    if let Ok(card) = cards.get(trigger.target()) {
+        if !held.contains(trigger.target()) {
             let claim = CambioAction::PickUpCard { card: *card };
             client.send_claim(claim);
         } else {
@@ -240,9 +260,7 @@ fn click_slot(
     held: Query<&IsHeldBy>,
     mut client: ResMut<RenetClient>,
 ) {
-    if let Ok(slot) = slots.get(trigger.target) {
-        if !held.is_empty() {
-            println!("Clicked slot");
-        }
+    if let Ok(slot) = slots.get(trigger.target()) {
+        println!("Clicked slot");
     }
 }

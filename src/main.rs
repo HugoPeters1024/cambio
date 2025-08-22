@@ -47,8 +47,6 @@ fn main() {
             ..default()
         }));
 
-        //app.add_plugins(bevy_editor_pls::EditorPlugin::new());
-
         // Because we doing networking, there might be updates to the game
         // even when the window is not in focus, so we should ensure our update
         // systems keep running in that case.

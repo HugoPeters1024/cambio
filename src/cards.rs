@@ -36,11 +36,11 @@ pub struct KnownCard {
 }
 
 #[derive(Debug, Component, PartialEq, Eq, Clone, Copy, Default)]
-#[require(Transform, Sprite, Pickable, PickingInteraction)]
+#[require(Transform, Sprite, Pickable)]
 pub struct SomeCard;
 
 #[derive(Debug, Component, Default)]
-#[require(Transform, InheritedVisibility)]
+#[require(Transform, Sprite, Pickable)]
 pub struct CardSlot;
 
 pub struct CardPlugin;
@@ -81,21 +81,12 @@ fn sync_sprite_with_card(
     }
 }
 
-fn on_spawn_slot(
-    trigger: Trigger<OnAdd, CardSlot>,
-    mut commands: Commands,
-    mut transforms: Query<&mut Transform>,
-    mesh_assets: Res<CustomMeshes>,
-) {
+fn on_spawn_slot(trigger: Trigger<OnAdd, CardSlot>, mut commands: Commands) {
     commands.entity(trigger.target()).insert((
-        Mesh2d(mesh_assets.card_slot.clone()),
-        MeshMaterial2d(mesh_assets.card_slot_material.clone()),
         Name::new("Card Slot"),
         Sprite::from_color(
-            Color::NONE,
+            Color::linear_rgb(0.0, 0.2, 0.0),
             Vec2::new(DESIRED_CARD_WIDTH, DESIRED_CARD_HEIGHT),
         ),
-        Pickable::default(),
     ));
-    transforms.get_mut(trigger.target()).unwrap().translation.z = 1.0;
 }
