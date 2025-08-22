@@ -12,10 +12,11 @@ mod messages;
 mod server;
 
 use crate::assets::*;
-use crate::cambio::PlayerState;
+use crate::cambio::CambioPlugin;
+use crate::cambio::MyPlayer;
+use crate::cambio::PlayerId;
 use crate::cards::*;
 use crate::client::ClientPlugin;
-use crate::client::ClientState;
 use crate::server::ServerPlugin;
 
 #[derive(Component)]
@@ -37,6 +38,7 @@ fn main() {
     if is_host {
         app.add_plugins(MinimalPlugins);
         app.add_plugins(ServerPlugin);
+        app.add_plugins(CambioPlugin);
     } else {
         app.add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -55,6 +57,7 @@ fn main() {
             ..default()
         });
         app.add_plugins(ClientPlugin);
+        app.add_plugins(CambioPlugin);
 
         app.add_plugins((GameAssetPlugin, CardPlugin));
 
@@ -81,16 +84,10 @@ fn setup(mut commands: Commands) {
 }
 
 fn update_player_idx_text(
-    state: Res<ClientState>,
-    player_ids: Query<&PlayerState>,
+    me: Single<&PlayerId, With<MyPlayer>>,
     mut text: Single<&mut Text, With<PlayerIdxText>>,
 ) {
-    let Some(me) = state.game.players.get(&state.client_id) else {
-        return;
-    };
-    if let Ok(me) = player_ids.get(*me) {
-        text.0 = format!("You are player: {}", *me.player_id);
-    }
+    text.0 = format!("You are player: {}", me.player_number);
 }
 
 // If any error is found we just panic

@@ -29,12 +29,6 @@ impl ClientExt for RenetClient {
     }
 }
 
-#[derive(Resource)]
-pub struct ClientState {
-    pub client_id: ClientId,
-    pub game: CambioState,
-}
-
 pub struct ClientPlugin;
 
 impl Plugin for ClientPlugin {
@@ -45,9 +39,7 @@ impl Plugin for ClientPlugin {
         let client_id = transport.client_id();
         app.insert_resource(client);
         app.insert_resource(transport);
-
-        let initial_state = init_state(client_id, app.world_mut());
-        app.insert_resource(initial_state);
+        app.init_resource::<CambioState>();
 
         app.add_systems(
             PreUpdate,
@@ -55,26 +47,10 @@ impl Plugin for ClientPlugin {
         );
 
         app.add_systems(Update, sync_held_by);
+
+        app.add_observer(click_card);
+        app.add_observer(click_slot);
     }
-}
-
-fn init_state(client_id: ClientId, world: &mut World) -> ClientState {
-    let table_card = world
-        .spawn((
-            SomeCard::default(),
-            CardId::StackCard,
-            Name::new("Table Card"),
-        ))
-        .observe(click_card)
-        .id();
-
-    return ClientState {
-        client_id,
-        game: CambioState {
-            table_card,
-            players: HashMap::default(),
-        },
-    };
 }
 
 fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
@@ -101,8 +77,11 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
 fn client_sync_players(
     mut commands: Commands,
     mut client: ResMut<RenetClient>,
-    mut state: ResMut<ClientState>,
+    mut state: ResMut<CambioState>,
     mut players: Query<&mut PlayerState>,
+    me: Query<&MyPlayer>,
+    mut cards: Query<&SomeCard>,
+    transport: ResMut<NetcodeClientTransport>,
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
         let server_message =
@@ -110,69 +89,38 @@ fn client_sync_players(
                 .unwrap()
                 .0;
         match server_message {
-            ServerMessage::PlayerConnected {
-                client_id,
-                player_idx: player_id,
-            } => {
-                println!("Player {} connected.", player_id.0);
+            ServerMessage::PlayerConnected { player_id } => {
+                println!("Player {} connected.", player_id.player_number);
                 debug_assert!(
-                    !state.game.players.contains_key(&client_id),
-                    "There can only be one player per client",
+                    !state.players.contains_key(&player_id),
+                    "Duplicate players are joining",
                 );
 
-                let player_entity = commands
-                    .spawn((
-                        PlayerState {
-                            last_mouse_pos_world: Vec2::ZERO,
-                            player_id,
-                        },
-                        Transform::from_xyz(0.0, -150.0, 0.0),
-                        InheritedVisibility::default(),
-                        Name::new(format!("Player {}", player_id.0)),
-                        Pickable::default(),
-                    ))
-                    .with_children(|parent| {
-                        parent
-                            .spawn((
-                                CardSlot,
-                                Transform::from_xyz(0.0, 0.0, 0.0),
-                                Name::new("The Slot"),
-                            ))
-                            .observe(click_slot);
+                let x = 100.0 - 200.0 * (player_id.player_number / 2) as f32;
+                let y = 100.0 - 200.0 * (player_id.player_number % 2) as f32;
 
-                        parent
-                            .spawn((
-                                CardSlot,
-                                Transform::from_xyz(100.0, 0.0, 0.0),
-                                Name::new("The Slot"),
-                            ))
-                            .observe(click_slot)
-                            .with_children(|parent| {
-                                parent
-                                    .spawn((
-                                        SomeCard,
-                                        Transform::from_xyz(10.0, 10.0, 1.0),
-                                        Name::new("The Card"),
-                                    ))
-                                    .observe(click_card);
-                            });
-                    })
+                let player_entity = commands
+                    .spawn((player_id, Transform::from_xyz(x, y, 0.0)))
                     .id();
 
-                state.game.players.insert(client_id, player_entity);
+                if player_id.client_id == transport.client_id() {
+                    commands.entity(player_entity).insert(MyPlayer);
+                }
+
+                state.players.insert(player_id, player_entity);
             }
-            ServerMessage::PlayerDisconnected { client_id } => {
+            ServerMessage::ClientDisconnected { client_id } => {
                 println!("Player {} disconnected.", client_id);
             }
-            ServerMessage::StateUpdate {
-                claimer_id: client_id,
-                action,
-            } => {
-                println!("Got verified claim that {} did {:?}", client_id, action);
+            ServerMessage::StateUpdate { claimer_id, action } => {
+                println!(
+                    "Got verified claim that player {} did {:?}",
+                    claimer_id.player_number, action
+                );
                 match action {
-                    CambioAction::PickUpCard { card } => {
-                        let card_entity = state.game.get_card(card);
-                        commands.entity(card_entity).insert(IsHeldBy(client_id));
+                    CambioAction::PickUpCard { card_id } => {
+                        let card_entity = state.card_index.get(&card_id).unwrap();
+                        commands.entity(*card_entity).insert(IsHeldBy(claimer_id));
                     }
                 }
             }
@@ -186,14 +134,14 @@ fn client_sync_players(
                 .0;
         match message {
             ServerMessageUnreliable::MousePositions(items) => {
-                for (client_id, mouse_pos) in items {
-                    if state.client_id == client_id {
+                for (player_id, mouse_pos) in items {
+                    if me.contains(state.players[&player_id]) {
                         // We use the local mouse position to reduce
                         // visual latency
                         continue;
                     }
 
-                    if let Ok(mut player_state) = players.get_mut(state.game.players[&client_id]) {
+                    if let Ok(mut player_state) = players.get_mut(state.players[&player_id]) {
                         player_state.last_mouse_pos_world = mouse_pos;
                     }
                 }
@@ -204,31 +152,25 @@ fn client_sync_players(
 
 fn set_and_publish_cursor_position(
     mut client: ResMut<RenetClient>,
-    state: ResMut<ClientState>,
-    mut players: Query<&mut PlayerState>,
+    mut me: Single<&mut PlayerState, With<MyPlayer>>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform)>,
 ) {
-    let Some(me) = state.game.players.get(&state.client_id) else {
-        return;
-    };
     if let Some(cpos) = window.cursor_position() {
         if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, cpos) {
-            if let Ok(mut me) = players.get_mut(*me) {
-                me.last_mouse_pos_world = world_pos;
-                client.send_claim_unreliable(ClientClaimUnreliable::MousePosition(world_pos));
-            }
+            me.last_mouse_pos_world = world_pos;
+            client.send_claim_unreliable(ClientClaimUnreliable::MousePosition(world_pos));
         }
     }
 }
 
 fn sync_held_by(
-    state: Res<ClientState>,
+    state: Res<CambioState>,
     mut held: Query<(&mut Transform, &IsHeldBy)>,
     players: Query<&PlayerState>,
 ) {
     for (mut transform, held_by) in held.iter_mut() {
-        if let Some(player_entity) = state.game.players.get(&held_by.0) {
+        if let Some(player_entity) = state.players.get(&held_by.0) {
             if let Ok(player_state) = players.get(*player_entity) {
                 transform.translation.x = player_state.last_mouse_pos_world.x;
                 transform.translation.y = player_state.last_mouse_pos_world.y;
@@ -238,16 +180,17 @@ fn sync_held_by(
 }
 
 fn click_card(
-    trigger: Trigger<Pointer<Click>>,
+    mut trigger: Trigger<Pointer<Click>>,
     cards: Query<&CardId>,
     held: Query<&IsHeldBy>,
     mut client: ResMut<RenetClient>,
 ) {
-    println!("Clicked card");
     if let Ok(card) = cards.get(trigger.target()) {
+        println!("Clicked card");
         if !held.contains(trigger.target()) {
-            let claim = CambioAction::PickUpCard { card: *card };
+            let claim = CambioAction::PickUpCard { card_id: *card };
             client.send_claim(claim);
+            trigger.propagate(false);
         } else {
             println!("Card already held");
         }
@@ -256,11 +199,30 @@ fn click_card(
 
 fn click_slot(
     mut trigger: Trigger<Pointer<Click>>,
-    slots: Query<&CardSlot>,
-    held: Query<&IsHeldBy>,
-    mut client: ResMut<RenetClient>,
+    mut commands: Commands,
+    me: Single<&PlayerId, With<MyPlayer>>,
+    slots: Query<Entity, With<CardSlot>>,
+    cards: Query<&CardId>,
+    children: Query<&Children>,
+    holders: Query<(Entity, &IsHeldBy)>,
 ) {
-    if let Ok(slot) = slots.get(trigger.target()) {
+    if let Ok(slot_entity) = slots.get(trigger.target()) {
         println!("Clicked slot");
+        if let Some((holding_card, _)) = holders.iter().filter(|h| h.1.0 == **me).next() {
+            if children
+                .iter_descendants(slot_entity)
+                .filter(|c| cards.contains(*c))
+                .next()
+                .is_none()
+            {
+                todo!("this should not be a client action, first ask the server");
+                commands
+                    .entity(holding_card)
+                    .remove::<IsHeldBy>()
+                    .insert(ChildOf(slot_entity))
+                    .insert(Pickable::default());
+                trigger.propagate(false);
+            }
+        }
     }
 }
