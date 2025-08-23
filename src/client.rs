@@ -1,10 +1,10 @@
 use std::{net::UdpSocket, time::SystemTime};
 
-use bevy::{platform::collections::HashMap, prelude::*, window::PrimaryWindow};
+use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_renet::{
     RenetClientPlugin, client_connected,
     netcode::{ClientAuthentication, NetcodeClientPlugin, NetcodeClientTransport},
-    renet::{ClientId, ConnectionConfig, DefaultChannel, RenetClient},
+    renet::{ConnectionConfig, DefaultChannel, RenetClient},
 };
 
 use crate::cambio::*;
@@ -38,7 +38,6 @@ impl Plugin for ClientPlugin {
         let (client, transport) = new_renet_client();
         app.insert_resource(client);
         app.insert_resource(transport);
-        app.init_resource::<CambioState>();
 
         app.add_systems(
             PreUpdate,
@@ -57,7 +56,6 @@ impl Plugin for ClientPlugin {
         ) {
             let player_id = *player_ids.get(trigger.target()).unwrap();
             if player_id.client_id == transport.client_id() {
-                println!("I spawned!");
                 commands.entity(trigger.target()).insert(MyPlayer);
             }
         }
@@ -113,16 +111,16 @@ fn client_sync_players(
         match message {
             ServerMessageUnreliable::MousePositions(items) => {
                 for (player_id, mouse_pos) in items {
-                    if state.players.get(&player_id).is_none() {
+                    if state.player_index.get(&player_id).is_none() {
                         continue;
                     }
-                    if me.contains(state.players[&player_id]) {
+                    if me.contains(state.player_index[&player_id]) {
                         // We use the local mouse position to reduce
                         // visual latency
                         continue;
                     }
 
-                    if let Ok(mut player_state) = players.get_mut(state.players[&player_id]) {
+                    if let Ok(mut player_state) = players.get_mut(state.player_index[&player_id]) {
                         player_state.last_mouse_pos_world = mouse_pos;
                     }
                 }
@@ -151,7 +149,7 @@ fn sync_held_by(
     players: Query<&PlayerState>,
 ) {
     for (mut transform, held_by) in held.iter_mut() {
-        if let Some(player_entity) = state.players.get(&held_by.0) {
+        if let Some(player_entity) = state.player_index.get(&held_by.0) {
             if let Ok(player_state) = players.get(*player_entity) {
                 transform.translation.x = player_state.last_mouse_pos_world.x;
                 transform.translation.y = player_state.last_mouse_pos_world.y;
@@ -167,13 +165,10 @@ fn click_card(
     mut client: ResMut<RenetClient>,
 ) {
     if let Ok(card) = cards.get(trigger.target()) {
-        println!("Clicked card");
         if !held.contains(trigger.target()) {
             let claim = CambioAction::PickUpCard { card_id: *card };
             client.send_claim(claim);
             trigger.propagate(false);
-        } else {
-            println!("Card already held");
         }
     }
 }
@@ -188,7 +183,6 @@ fn click_slot(
     mut client: ResMut<RenetClient>,
 ) {
     if let Ok((slot_entity, slot_id)) = slots.get(trigger.target()) {
-        println!("Clicked slot");
         if let Some((holding_card, _)) = holders.iter().filter(|h| h.1.0 == **me).next() {
             if children
                 .iter_descendants(slot_entity)

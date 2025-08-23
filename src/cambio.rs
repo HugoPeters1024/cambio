@@ -1,8 +1,12 @@
-use bevy::{platform::collections::HashMap, prelude::*};
+use bevy::{platform::collections::HashMap, prelude::*, sprite::Anchor};
 use bevy_renet::renet::ClientId;
 use serde::{Deserialize, Serialize};
 
-use crate::{cards::*, messages::ServerMessage};
+use crate::{
+    assets::{DESIRED_CARD_HEIGHT, DESIRED_CARD_WIDTH},
+    cards::*,
+    messages::ServerMessage,
+};
 
 #[derive(
     Debug, Component, Serialize, Deserialize, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord,
@@ -41,11 +45,12 @@ pub struct PlayerState {
     pub slots: Vec<Entity>,
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct CambioState {
+    pub root: Entity,
     pub card_index: HashMap<CardId, Entity>,
     pub slot_index: HashMap<SlotId, Entity>,
-    pub players: HashMap<PlayerId, Entity>,
+    pub player_index: HashMap<PlayerId, Entity>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -66,17 +71,53 @@ impl Plugin for CambioPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<IncomingMessage>();
         app.add_event::<ProcessedMessage>();
+
+        app.world_mut()
+            .run_system_cached(setup_game_resource)
+            .unwrap();
+
         app.add_observer(setup_player);
         app.add_observer(setup_slot);
         app.add_observer(on_spawn_card);
 
+        app.add_systems(Startup, setup_game);
         app.add_systems(PreUpdate, process_message);
     }
 }
 
-fn setup_player(trigger: Trigger<OnAdd, PlayerId>, mut commands: Commands) {
-    println!("Setting up player");
+fn setup_game_resource(mut commands: Commands) {
+    let root = commands
+        .spawn((
+            Name::new("Cambio"),
+            InheritedVisibility::default(),
+            Transform::default(),
+        ))
+        .id();
 
+    let state = CambioState {
+        root,
+        card_index: HashMap::new(),
+        slot_index: HashMap::new(),
+        player_index: HashMap::new(),
+    };
+
+    commands.insert_resource(state);
+}
+
+fn setup_game(mut commands: Commands, state: Res<CambioState>) {
+    commands.entity(state.root).with_children(|p| {
+        p.spawn((
+            SomeCard,
+            CardId::StackCard,
+            KnownCard {
+                suit: Suit::Spades,
+                rank: Rank::Ace,
+            },
+        ));
+    });
+}
+
+fn setup_player(trigger: Trigger<OnAdd, PlayerId>, mut commands: Commands) {
     commands
         .entity(trigger.target())
         .insert(PlayerState {
@@ -97,13 +138,12 @@ fn setup_slot(
     parents: Query<&ChildOf>,
     mut players: Query<(&PlayerId, &mut PlayerState)>,
 ) {
-    println!("Setting up a slot");
     if let Ok(parent) = parents.get(trigger.target()) {
         if let Ok((player_id, mut player)) = players.get_mut(parent.0) {
             let slot_idx = player.slots.len();
 
-            let x = 100.0 * (slot_idx % 2) as f32;
-            let y = 100.0 * (slot_idx / 2) as f32;
+            let x = (DESIRED_CARD_WIDTH + 10.0) * (slot_idx % 2) as f32 - DESIRED_CARD_WIDTH;
+            let y = (DESIRED_CARD_HEIGHT + 10.0) * (slot_idx / 2) as f32 - DESIRED_CARD_HEIGHT;
 
             player.slots.push(trigger.target());
             let slot_id = SlotId {
@@ -135,9 +175,11 @@ fn setup_slot(
 
 fn on_spawn_card(
     trigger: Trigger<OnAdd, CardId>,
+    mut commands: Commands,
     card_ids: Query<&CardId>,
     mut state: ResMut<CambioState>,
 ) {
+    commands.entity(trigger.target()).insert(Anchor::Center);
     let card_id = *card_ids.get(trigger.target()).unwrap();
     state.card_index.insert(card_id, trigger.target());
 }
@@ -147,7 +189,6 @@ pub fn process_message(
     mut validated: EventWriter<ProcessedMessage>,
     mut state: ResMut<CambioState>,
     held: Query<&IsHeldBy>,
-    mut transforms: Query<&mut Transform>,
     mut commands: Commands,
 ) {
     for IncomingMessage(msg) in claims.read() {
@@ -155,22 +196,30 @@ pub fn process_message(
         match msg {
             ServerMessage::PlayerConnected { player_id } => {
                 println!("Player {} connected.", player_id.player_number);
-                let x = 150.0 - 300.0 * (player_id.player_number / 2) as f32;
-                let y = 150.0 - 300.0 * (player_id.player_number % 2) as f32;
+
+                let phi = 2.0 * std::f32::consts::PI * (player_id.player_number - 1) as f32 / 4.0;
+
+                let x = 150.0 * phi.cos();
+                let y = 150.0 * phi.sin();
 
                 let player_entity = commands
-                    .spawn((*player_id, Transform::from_xyz(x, y, 0.0)))
+                    .spawn((
+                        *player_id,
+                        Name::new(format!("Player {}", player_id.player_number)),
+                        Transform::from_xyz(x, y, 0.0),
+                        ChildOf(state.root),
+                    ))
                     .id();
 
-                state.players.insert(*player_id, player_entity);
+                state.player_index.insert(*player_id, player_entity);
                 validated.write(ProcessedMessage(msg.clone()));
             }
             ServerMessage::PlayerDisconnected { player_id } => {
                 println!("Player {} disconnected.", player_id.player_number);
 
-                let player_entity = *state.players.get(player_id).unwrap();
+                let player_entity = *state.player_index.get(player_id).unwrap();
                 commands.entity(player_entity).despawn_related::<Children>();
-                state.players.remove(player_id);
+                state.player_index.remove(player_id);
 
                 validated.write(ProcessedMessage(msg.clone()));
             }
@@ -198,6 +247,7 @@ pub fn process_message(
                     commands
                         .entity(card_entity)
                         .insert(IsHeldBy(*claimer_id))
+                        .insert(Transform::from_xyz(0.0, 0.0, 10.0))
                         .remove::<ChildOf>()
                         .remove::<Pickable>();
                     validated.write(ProcessedMessage(msg.clone()));
@@ -230,12 +280,8 @@ pub fn process_message(
                         .entity(card_entity)
                         .remove::<IsHeldBy>()
                         .insert(ChildOf(slot_entity))
-                        .insert(Pickable::default());
-
-                    if let Ok(mut transform) = transforms.get_mut(card_entity) {
-                        transform.translation.x = 2.0;
-                        transform.translation.y = 2.0;
-                    }
+                        .insert(Pickable::default())
+                        .insert(Transform::from_xyz(2.0, 2.0, 1.0));
 
                     validated.write(ProcessedMessage(msg.clone()));
                 }

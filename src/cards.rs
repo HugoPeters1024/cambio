@@ -1,4 +1,4 @@
-use bevy::{picking::hover::PickingInteraction, prelude::*};
+use bevy::prelude::*;
 
 use crate::assets::*;
 

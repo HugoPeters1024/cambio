@@ -1,6 +1,6 @@
 use std::{net::UdpSocket, time::SystemTime};
 
-use bevy::{platform::collections::HashMap, prelude::*};
+use bevy::prelude::*;
 use bevy_renet::{
     RenetServerPlugin,
     netcode::{NetcodeServerPlugin, NetcodeServerTransport, ServerAuthentication, ServerConfig},
@@ -37,7 +37,6 @@ impl Plugin for ServerPlugin {
         let (server, transport) = new_renet_server();
         app.insert_resource(server);
         app.insert_resource(transport);
-        app.init_resource::<CambioState>();
 
         app.add_systems(
             Update,
@@ -86,7 +85,7 @@ fn server_update_system(
 
                 // We could send an InitState with all the players id and positions for the client
                 // but this is easier to do.
-                for &existing_client in state.players.keys() {
+                for &existing_client in state.player_index.keys() {
                     server.send_message_typed(
                         *client_id,
                         ServerMessage::PlayerConnected {
@@ -107,7 +106,7 @@ fn server_update_system(
                 }));
             }
             ServerEvent::ClientDisconnected { client_id, .. } => {
-                for player in state.players.keys() {
+                for player in state.player_index.keys() {
                     if player.client_id == *client_id {
                         to_validate.write(IncomingMessage(ServerMessage::PlayerDisconnected {
                             player_id: *player,
@@ -118,7 +117,7 @@ fn server_update_system(
         }
     }
 
-    for claimer_id in state.players.keys() {
+    for claimer_id in state.player_index.keys() {
         while let Some(message) =
             server.receive_message(claimer_id.client_id, DefaultChannel::ReliableOrdered)
         {
@@ -134,7 +133,7 @@ fn server_update_system(
         }
     }
 
-    for (player_id, player_entity) in state.players.iter() {
+    for (player_id, player_entity) in state.player_index.iter() {
         while let Some(message) =
             server.receive_message(player_id.client_id, DefaultChannel::Unreliable)
         {
@@ -155,7 +154,7 @@ fn server_update_system(
 
     let mouse_update = ServerMessageUnreliable::MousePositions(
         state
-            .players
+            .player_index
             .iter()
             .filter_map(|(&id, player)| {
                 players
