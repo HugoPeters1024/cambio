@@ -36,18 +36,33 @@ impl Plugin for ClientPlugin {
         app.add_plugins(RenetClientPlugin);
         app.add_plugins(NetcodeClientPlugin);
         let (client, transport) = new_renet_client();
-        let client_id = transport.client_id();
         app.insert_resource(client);
         app.insert_resource(transport);
         app.init_resource::<CambioState>();
 
         app.add_systems(
             PreUpdate,
-            (client_sync_players, set_and_publish_cursor_position.chain()).run_if(client_connected),
+            (client_sync_players, set_and_publish_cursor_position.chain())
+                .run_if(client_connected)
+                .after(process_message),
         );
 
         app.add_systems(Update, sync_held_by);
 
+        fn check_if_i_spawned(
+            trigger: Trigger<OnAdd, PlayerId>,
+            player_ids: Query<&PlayerId>,
+            transport: Res<NetcodeClientTransport>,
+            mut commands: Commands,
+        ) {
+            let player_id = *player_ids.get(trigger.target()).unwrap();
+            if player_id.client_id == transport.client_id() {
+                println!("I spawned!");
+                commands.entity(trigger.target()).insert(MyPlayer);
+            }
+        }
+
+        app.add_observer(check_if_i_spawned);
         app.add_observer(click_card);
         app.add_observer(click_slot);
     }
@@ -75,56 +90,19 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
 }
 
 fn client_sync_players(
-    mut commands: Commands,
+    mut writer: EventWriter<IncomingMessage>,
     mut client: ResMut<RenetClient>,
-    mut state: ResMut<CambioState>,
+    state: Res<CambioState>,
     mut players: Query<&mut PlayerState>,
     me: Query<&MyPlayer>,
-    mut cards: Query<&SomeCard>,
-    transport: ResMut<NetcodeClientTransport>,
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
-        let server_message =
+        let server_message: ServerMessage =
             bincode::serde::decode_from_slice(&message, bincode::config::standard())
                 .unwrap()
                 .0;
-        match server_message {
-            ServerMessage::PlayerConnected { player_id } => {
-                println!("Player {} connected.", player_id.player_number);
-                debug_assert!(
-                    !state.players.contains_key(&player_id),
-                    "Duplicate players are joining",
-                );
 
-                let x = 100.0 - 200.0 * (player_id.player_number / 2) as f32;
-                let y = 100.0 - 200.0 * (player_id.player_number % 2) as f32;
-
-                let player_entity = commands
-                    .spawn((player_id, Transform::from_xyz(x, y, 0.0)))
-                    .id();
-
-                if player_id.client_id == transport.client_id() {
-                    commands.entity(player_entity).insert(MyPlayer);
-                }
-
-                state.players.insert(player_id, player_entity);
-            }
-            ServerMessage::ClientDisconnected { client_id } => {
-                println!("Player {} disconnected.", client_id);
-            }
-            ServerMessage::StateUpdate { claimer_id, action } => {
-                println!(
-                    "Got verified claim that player {} did {:?}",
-                    claimer_id.player_number, action
-                );
-                match action {
-                    CambioAction::PickUpCard { card_id } => {
-                        let card_entity = state.card_index.get(&card_id).unwrap();
-                        commands.entity(*card_entity).insert(IsHeldBy(claimer_id));
-                    }
-                }
-            }
-        }
+        writer.write(IncomingMessage(server_message.clone()));
     }
 
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
@@ -135,6 +113,9 @@ fn client_sync_players(
         match message {
             ServerMessageUnreliable::MousePositions(items) => {
                 for (player_id, mouse_pos) in items {
+                    if state.players.get(&player_id).is_none() {
+                        continue;
+                    }
                     if me.contains(state.players[&player_id]) {
                         // We use the local mouse position to reduce
                         // visual latency
@@ -199,14 +180,14 @@ fn click_card(
 
 fn click_slot(
     mut trigger: Trigger<Pointer<Click>>,
-    mut commands: Commands,
     me: Single<&PlayerId, With<MyPlayer>>,
-    slots: Query<Entity, With<CardSlot>>,
+    slots: Query<(Entity, &SlotId), With<CardSlot>>,
     cards: Query<&CardId>,
     children: Query<&Children>,
     holders: Query<(Entity, &IsHeldBy)>,
+    mut client: ResMut<RenetClient>,
 ) {
-    if let Ok(slot_entity) = slots.get(trigger.target()) {
+    if let Ok((slot_entity, slot_id)) = slots.get(trigger.target()) {
         println!("Clicked slot");
         if let Some((holding_card, _)) = holders.iter().filter(|h| h.1.0 == **me).next() {
             if children
@@ -215,12 +196,11 @@ fn click_slot(
                 .next()
                 .is_none()
             {
-                todo!("this should not be a client action, first ask the server");
-                commands
-                    .entity(holding_card)
-                    .remove::<IsHeldBy>()
-                    .insert(ChildOf(slot_entity))
-                    .insert(Pickable::default());
+                let card_id = *cards.get(holding_card).unwrap();
+                client.send_claim(CambioAction::DropCardOnSlot {
+                    card_id: card_id,
+                    slot_id: *slot_id,
+                });
                 trigger.propagate(false);
             }
         }

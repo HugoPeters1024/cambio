@@ -8,7 +8,6 @@ use bevy_renet::{
 };
 
 use crate::cambio::*;
-use crate::cards::*;
 use crate::messages::*;
 
 trait ServerExt {
@@ -40,7 +39,14 @@ impl Plugin for ServerPlugin {
         app.insert_resource(transport);
         app.init_resource::<CambioState>();
 
-        app.add_systems(Update, (server_update_system).chain());
+        app.add_systems(
+            Update,
+            (
+                server_update_system,
+                broadcast_validated_updates.after(process_message),
+            )
+                .chain(),
+        );
     }
 }
 
@@ -66,13 +72,12 @@ fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
 }
 
 fn server_update_system(
-    mut commands: Commands,
     mut server_events: EventReader<ServerEvent>,
     mut server: ResMut<RenetServer>,
-    mut state: ResMut<CambioState>,
+    state: ResMut<CambioState>,
     mut players: Query<(&PlayerId, &mut PlayerState)>,
-    held: Query<&IsHeldBy>,
     mut player_seq: Local<u8>,
+    mut to_validate: EventWriter<IncomingMessage>,
 ) {
     for event in server_events.read() {
         match event {
@@ -81,12 +86,11 @@ fn server_update_system(
 
                 // We could send an InitState with all the players id and positions for the client
                 // but this is easier to do.
-                for (&existing_client, player) in state.players.iter() {
-                    let (player_id, _) = players.get(*player).expect("Player has no PlayerState");
+                for &existing_client in state.players.keys() {
                     server.send_message_typed(
                         *client_id,
                         ServerMessage::PlayerConnected {
-                            player_id: *player_id,
+                            player_id: existing_client,
                         },
                     );
                 }
@@ -98,20 +102,18 @@ fn server_update_system(
                     client_id: *client_id,
                 };
 
-                let new_player = commands.spawn(new_player_id).id();
-
-                state.players.insert(new_player_id, new_player);
-
-                server.broadcast_message_typed(ServerMessage::PlayerConnected {
+                to_validate.write(IncomingMessage(ServerMessage::PlayerConnected {
                     player_id: new_player_id,
-                });
+                }));
             }
-            ServerEvent::ClientDisconnected { client_id, reason } => {
-                println!("Player {} disconnected: {}", client_id, reason);
-                state.players.retain(|id, _| id.client_id != *client_id);
-                server.broadcast_message_typed(ServerMessage::ClientDisconnected {
-                    client_id: *client_id,
-                });
+            ServerEvent::ClientDisconnected { client_id, .. } => {
+                for player in state.players.keys() {
+                    if player.client_id == *client_id {
+                        to_validate.write(IncomingMessage(ServerMessage::PlayerDisconnected {
+                            player_id: *player,
+                        }));
+                    }
+                }
             }
         }
     }
@@ -124,23 +126,11 @@ fn server_update_system(
                 bincode::serde::decode_from_slice(&message, bincode::config::standard())
                     .unwrap()
                     .0;
-            println!(
-                "Got claim from player {}: {:?}",
-                claimer_id.player_number, claim
-            );
 
-            match claim {
-                CambioAction::PickUpCard { card_id } => {
-                    if !held.iter().any(|held| &held.0 == claimer_id) {
-                        let card_entity = *state.card_index.get(&card_id).unwrap();
-                        commands.entity(card_entity).insert(IsHeldBy(*claimer_id));
-                        server.broadcast_message_typed(ServerMessage::StateUpdate {
-                            claimer_id: *claimer_id,
-                            action: claim,
-                        });
-                    }
-                }
-            }
+            to_validate.write(IncomingMessage(ServerMessage::StateUpdate {
+                claimer_id: *claimer_id,
+                action: claim,
+            }));
         }
     }
 
@@ -180,4 +170,13 @@ fn server_update_system(
         DefaultChannel::Unreliable,
         bincode::serde::encode_to_vec(mouse_update, bincode::config::standard()).unwrap(),
     );
+}
+
+fn broadcast_validated_updates(
+    mut validated: EventReader<ProcessedMessage>,
+    mut server: ResMut<RenetServer>,
+) {
+    for ProcessedMessage(message) in validated.read() {
+        server.broadcast_message_typed(message.clone());
+    }
 }

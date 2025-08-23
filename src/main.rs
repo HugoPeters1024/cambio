@@ -37,6 +37,7 @@ fn main() {
 
     if is_host {
         app.add_plugins(MinimalPlugins);
+        app.add_plugins(bevy::log::LogPlugin::default());
         app.add_plugins(ServerPlugin);
         app.add_plugins(CambioPlugin);
     } else {

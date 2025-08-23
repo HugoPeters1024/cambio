@@ -4,13 +4,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::cambio::{CambioAction, PlayerId};
 
-#[derive(Debug, Serialize, Deserialize, Component)]
+#[derive(Debug, Serialize, Deserialize, Component, Clone)]
 pub enum ServerMessage {
     PlayerConnected {
         player_id: PlayerId,
     },
-    ClientDisconnected {
-        client_id: ClientId,
+    PlayerDisconnected {
+        player_id: PlayerId,
     },
     StateUpdate {
         claimer_id: PlayerId,
