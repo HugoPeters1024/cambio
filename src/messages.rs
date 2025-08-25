@@ -1,12 +1,16 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::cambio::{CardId, PlayerId, SlotId};
+use crate::{
+    cambio::{CardId, PlayerId, SlotId},
+    cards::KnownCard,
+};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ClientClaim {
     PickUpCard { card_id: CardId },
     DropCardOnSlot { card_id: CardId, slot_id: SlotId },
+    LookAtCard { card_id: CardId },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -25,6 +29,11 @@ pub enum ServerMessage {
         actor: PlayerId,
         slot_id: SlotId,
         card_id: CardId,
+    },
+    RevealCard {
+        actor: PlayerId,
+        card_id: CardId,
+        value: KnownCard,
     },
     PickUpCard {
         actor: PlayerId,

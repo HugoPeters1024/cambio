@@ -1,8 +1,10 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
+use strum_macros::EnumIter;
 
 use crate::assets::*;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, EnumIter)]
 pub enum Suit {
     #[default]
     Spades,
@@ -11,7 +13,7 @@ pub enum Suit {
     Diamonds,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, EnumIter)]
 pub enum Rank {
     #[default]
     Ace,
@@ -29,7 +31,7 @@ pub enum Rank {
     King,
 }
 
-#[derive(Debug, Component, PartialEq, Eq, Clone, Copy, Default)]
+#[derive(Debug, Component, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct KnownCard {
     pub suit: Suit,
     pub rank: Rank,

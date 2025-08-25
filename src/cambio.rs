@@ -76,8 +76,6 @@ impl Plugin for CambioPlugin {
             .run_system_cached(setup_game_resource)
             .unwrap();
 
-        app.add_observer(on_spawn_card);
-
         app.add_systems(PreUpdate, process_messages);
     }
 }
@@ -99,15 +97,6 @@ fn setup_game_resource(mut commands: Commands) {
     };
 
     commands.insert_resource(state);
-}
-
-fn on_spawn_card(
-    trigger: Trigger<OnAdd, CardId>,
-    card_ids: Query<&CardId>,
-    mut state: ResMut<CambioState>,
-) {
-    let card_id = *card_ids.get(trigger.target()).unwrap();
-    state.card_index.insert(card_id, trigger.target());
 }
 
 pub fn process_messages(world: &mut World) {
@@ -294,12 +283,45 @@ pub fn process_single_event(
             commands
                 .entity(card_entity)
                 .remove::<IsHeldBy>()
+                .remove::<KnownCard>()
                 .insert(ChildOf(slot_entity))
                 .insert(Pickable::default())
                 .insert(Transform::from_xyz(3.0, 3.0, 1.0));
+        }
+        ServerMessage::RevealCard {
+            actor,
+            card_id,
+            value: known_card,
+        } => {
+            let Some(&card_entity) = state.card_index.get(&card_id) else {
+                warn!("Card not found.");
+                return None;
+            };
+
+            let Ok((_, held_by)) = held.get(card_entity) else {
+                warn!("Card not held by anyone.");
+                return None;
+            };
+
+            if held_by.0 != actor {
+                warn!(
+                    "Player {} is not holding the card, Player {} is.",
+                    actor.player_number(),
+                    held_by.0.player_number()
+                );
+                return None;
+            }
+
+            commands.entity(card_entity).insert(known_card);
         }
     }
 
     // If we're still here then we accepted the message.
     return Some(ProcessedMessage(msg));
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn it_works() {}
 }

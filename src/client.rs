@@ -121,10 +121,14 @@ fn setup(mut commands: Commands, state: Res<CambioState>, assets: Res<GameAssets
 
     commands.spawn((Text::from("You are player: ..."), PlayerIdxText));
 
-    commands.entity(state.root).with_child((
-        Sprite::from_image(assets.reveal_sprite.clone()),
-        Transform::from_xyz(90.0, 0.0, 0.0),
-    ));
+    commands
+        .entity(state.root)
+        .with_child((
+            Sprite::from_image(assets.reveal_sprite.clone()),
+            Transform::from_xyz(90.0, 0.0, 0.0),
+            Pickable::default(),
+        ))
+        .observe(click_reveal_button);
 }
 
 fn update_player_idx_text(
@@ -245,5 +249,19 @@ fn click_slot(
                 trigger.propagate(false);
             }
         }
+    }
+}
+
+fn click_reveal_button(
+    mut trigger: Trigger<Pointer<Click>>,
+    mut client: ResMut<RenetClient>,
+    cards: Query<&CardId>,
+    me: Single<&PlayerId, With<MyPlayer>>,
+    holders: Query<(Entity, &IsHeldBy)>,
+) {
+    if let Some((holding_card, _)) = holders.iter().filter(|h| h.1.0 == **me).next() {
+        let card_id = *cards.get(holding_card).unwrap();
+        client.send_claim(ClientClaim::LookAtCard { card_id });
+        trigger.propagate(false);
     }
 }

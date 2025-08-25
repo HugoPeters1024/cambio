@@ -6,9 +6,12 @@ use bevy_renet::{
     netcode::{NetcodeServerPlugin, NetcodeServerTransport, ServerAuthentication, ServerConfig},
     renet::{ClientId, ConnectionConfig, DefaultChannel, RenetServer, ServerEvent},
 };
+use strum::IntoEnumIterator;
 
+use crate::cambio::*;
+use crate::cards::*;
 use crate::messages::*;
-use crate::{cambio::*, utils::Seq};
+use crate::utils::Seq;
 
 trait ServerExt {
     fn broadcast_message_typed(&mut self, message: ServerMessage);
@@ -30,6 +33,36 @@ impl ServerExt for RenetServer {
 
 #[derive(Default, Resource)]
 struct ProcessedHistory(Vec<ProcessedMessage>);
+
+pub struct CardDeck {
+    seq: Seq<u64>,
+    stack: Vec<KnownCard>,
+}
+
+impl Default for CardDeck {
+    fn default() -> Self {
+        let mut stack = Vec::new();
+        for suit in Suit::iter() {
+            for rank in Rank::iter() {
+                stack.push(KnownCard { suit, rank });
+            }
+        }
+        CardDeck {
+            seq: Seq::default(),
+            stack,
+        }
+    }
+}
+
+impl CardDeck {
+    fn generate(&mut self) -> CardId {
+        CardId(self.seq.generate())
+    }
+
+    fn get_card(&mut self, id: &CardId) -> KnownCard {
+        self.stack[id.0 as usize]
+    }
+}
 
 pub struct ServerPlugin;
 
@@ -79,8 +112,8 @@ fn server_update_system(
     state: ResMut<CambioState>,
     mut players: Query<(&PlayerId, &mut PlayerState)>,
     mut player_seq: Local<Seq<u8>>,
-    mut card_seq: Local<Seq<u64>>,
     mut slot_seq: Local<Seq<u64>>,
+    mut deck: Local<CardDeck>,
     mut bus: ResMut<MessageBus>,
     processed_history: Res<ProcessedHistory>,
 ) {
@@ -116,7 +149,7 @@ fn server_update_system(
                         .push_back(IncomingMessage(ServerMessage::ReceiveFreshCard {
                             actor: new_player_id,
                             slot_id,
-                            card_id: CardId(card_seq.generate()),
+                            card_id: deck.generate(),
                         }));
                 }
             }
@@ -150,6 +183,11 @@ fn server_update_system(
                     actor: *claimer_id,
                     card_id,
                     slot_id,
+                },
+                ClientClaim::LookAtCard { card_id } => ServerMessage::RevealCard {
+                    actor: *claimer_id,
+                    card_id,
+                    value: deck.get_card(&card_id),
                 },
             };
 
