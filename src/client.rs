@@ -7,18 +7,19 @@ use bevy_renet::{
     renet::{ConnectionConfig, DefaultChannel, RenetClient},
 };
 
+use crate::assets::*;
 use crate::cambio::*;
-use crate::cards::*;
 use crate::messages::*;
+use crate::{PlayerIdxText, cards::*};
 
 pub trait ClientExt {
-    fn send_claim(&mut self, claim: CambioAction);
+    fn send_claim(&mut self, claim: ClientClaim);
 
     fn send_claim_unreliable(&mut self, claim: ClientClaimUnreliable);
 }
 
 impl ClientExt for RenetClient {
-    fn send_claim(&mut self, claim: CambioAction) {
+    fn send_claim(&mut self, claim: ClientClaim) {
         let encoded = bincode::serde::encode_to_vec(&claim, bincode::config::standard()).unwrap();
         self.send_message(DefaultChannel::ReliableOrdered, encoded);
     }
@@ -40,29 +41,49 @@ impl Plugin for ClientPlugin {
         app.insert_resource(transport);
 
         app.add_systems(
-            PreUpdate,
-            (client_sync_players, set_and_publish_cursor_position.chain())
-                .run_if(client_connected)
-                .after(process_message),
+            PostUpdate,
+            ((
+                client_sync_players,
+                set_and_publish_cursor_position,
+                sync_held_by,
+            )
+                .chain())
+            .run_if(client_connected),
         );
 
-        app.add_systems(Update, sync_held_by);
-
-        fn check_if_i_spawned(
+        fn on_player_spawn(
             trigger: Trigger<OnAdd, PlayerId>,
             player_ids: Query<&PlayerId>,
             transport: Res<NetcodeClientTransport>,
             mut commands: Commands,
         ) {
             let player_id = *player_ids.get(trigger.target()).unwrap();
+
+            // Mark this player as the local player
             if player_id.client_id == transport.client_id() {
                 commands.entity(trigger.target()).insert(MyPlayer);
             }
+
+            let up_or_down = if player_id.player_index <= 2 {
+                1.0
+            } else {
+                -1.0
+            };
+
+            commands.entity(trigger.target()).with_child((
+                Text2d::new(format!("Player {}", player_id.player_number())),
+                TextFont::from_font_size(14.0),
+                Transform::from_xyz(0.0, (DESIRED_CARD_HEIGHT + 15.0) * up_or_down, 1.0),
+                TextColor(Color::WHITE),
+            ));
         }
 
-        app.add_observer(check_if_i_spawned);
+        app.add_observer(on_player_spawn);
         app.add_observer(click_card);
         app.add_observer(click_slot);
+
+        app.add_systems(OnEnter(GamePhase::Playing), setup);
+        app.add_systems(Update, update_player_idx_text);
     }
 }
 
@@ -87,8 +108,34 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
     (client, transport)
 }
 
+fn setup(mut commands: Commands, state: Res<CambioState>, assets: Res<GameAssets>) {
+    commands.spawn((
+        Camera2d,
+        Projection::Orthographic(OrthographicProjection {
+            scaling_mode: bevy::render::camera::ScalingMode::FixedVertical {
+                viewport_height: 480.0,
+            },
+            ..OrthographicProjection::default_2d()
+        }),
+    ));
+
+    commands.spawn((Text::from("You are player: ..."), PlayerIdxText));
+
+    commands.entity(state.root).with_child((
+        Sprite::from_image(assets.reveal_sprite.clone()),
+        Transform::from_xyz(90.0, 0.0, 0.0),
+    ));
+}
+
+fn update_player_idx_text(
+    me: Single<&PlayerId, With<MyPlayer>>,
+    mut text: Single<&mut Text, With<PlayerIdxText>>,
+) {
+    text.0 = format!("You are player: {}", me.player_number());
+}
+
 fn client_sync_players(
-    mut writer: EventWriter<IncomingMessage>,
+    mut bus: ResMut<MessageBus>,
     mut client: ResMut<RenetClient>,
     state: Res<CambioState>,
     mut players: Query<&mut PlayerState>,
@@ -100,7 +147,8 @@ fn client_sync_players(
                 .unwrap()
                 .0;
 
-        writer.write(IncomingMessage(server_message.clone()));
+        bus.incoming
+            .push_back(IncomingMessage(server_message.clone()));
     }
 
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
@@ -166,8 +214,7 @@ fn click_card(
 ) {
     if let Ok(card) = cards.get(trigger.target()) {
         if !held.contains(trigger.target()) {
-            let claim = CambioAction::PickUpCard { card_id: *card };
-            client.send_claim(claim);
+            client.send_claim(ClientClaim::PickUpCard { card_id: *card });
             trigger.propagate(false);
         }
     }
@@ -191,7 +238,7 @@ fn click_slot(
                 .is_none()
             {
                 let card_id = *cards.get(holding_card).unwrap();
-                client.send_claim(CambioAction::DropCardOnSlot {
+                client.send_claim(ClientClaim::DropCardOnSlot {
                     card_id: card_id,
                     slot_id: *slot_id,
                 });

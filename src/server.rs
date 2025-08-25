@@ -7,8 +7,8 @@ use bevy_renet::{
     renet::{ClientId, ConnectionConfig, DefaultChannel, RenetServer, ServerEvent},
 };
 
-use crate::cambio::*;
 use crate::messages::*;
+use crate::{cambio::*, utils::Seq};
 
 trait ServerExt {
     fn broadcast_message_typed(&mut self, message: ServerMessage);
@@ -28,6 +28,9 @@ impl ServerExt for RenetServer {
     }
 }
 
+#[derive(Default, Resource)]
+struct ProcessedHistory(Vec<ProcessedMessage>);
+
 pub struct ServerPlugin;
 
 impl Plugin for ServerPlugin {
@@ -37,14 +40,14 @@ impl Plugin for ServerPlugin {
         let (server, transport) = new_renet_server();
         app.insert_resource(server);
         app.insert_resource(transport);
+        app.init_resource::<ProcessedHistory>();
 
         app.add_systems(
             Update,
             (
-                server_update_system,
-                broadcast_validated_updates.after(process_message),
-            )
-                .chain(),
+                server_update_system.before(process_messages),
+                broadcast_validated_updates.after(process_messages),
+            ),
         );
     }
 }
@@ -75,42 +78,54 @@ fn server_update_system(
     mut server: ResMut<RenetServer>,
     state: ResMut<CambioState>,
     mut players: Query<(&PlayerId, &mut PlayerState)>,
-    mut player_seq: Local<u8>,
-    mut to_validate: EventWriter<IncomingMessage>,
+    mut player_seq: Local<Seq<u8>>,
+    mut card_seq: Local<Seq<u64>>,
+    mut slot_seq: Local<Seq<u64>>,
+    mut bus: ResMut<MessageBus>,
+    processed_history: Res<ProcessedHistory>,
 ) {
     for event in server_events.read() {
         match event {
             ServerEvent::ClientConnected { client_id } => {
                 println!("Player {} connected.", client_id);
 
-                // We could send an InitState with all the players id and positions for the client
-                // but this is easier to do.
-                for &existing_client in state.player_index.keys() {
-                    server.send_message_typed(
-                        *client_id,
-                        ServerMessage::PlayerConnected {
-                            player_id: existing_client,
-                        },
-                    );
+                // Replay all historical events
+                for ProcessedMessage(msg) in processed_history.0.iter() {
+                    server.send_message_typed(*client_id, msg.clone());
                 }
 
-                *player_seq += 1;
-
                 let new_player_id = PlayerId {
-                    player_number: *player_seq,
+                    player_index: player_seq.generate(),
                     client_id: *client_id,
                 };
 
-                to_validate.write(IncomingMessage(ServerMessage::PlayerConnected {
-                    player_id: new_player_id,
-                }));
+                bus.incoming
+                    .push_back(IncomingMessage(ServerMessage::PlayerConnected {
+                        player_id: new_player_id,
+                    }));
+
+                for _ in 0..4 {
+                    let slot_id = SlotId(slot_seq.generate());
+                    bus.incoming
+                        .push_back(IncomingMessage(ServerMessage::ReceiveFreshSlot {
+                            actor: new_player_id,
+                            slot_id,
+                        }));
+
+                    bus.incoming
+                        .push_back(IncomingMessage(ServerMessage::ReceiveFreshCard {
+                            actor: new_player_id,
+                            slot_id,
+                            card_id: CardId(card_seq.generate()),
+                        }));
+                }
             }
             ServerEvent::ClientDisconnected { client_id, .. } => {
                 for player in state.player_index.keys() {
                     if player.client_id == *client_id {
-                        to_validate.write(IncomingMessage(ServerMessage::PlayerDisconnected {
-                            player_id: *player,
-                        }));
+                        bus.incoming.push_back(IncomingMessage(
+                            ServerMessage::PlayerDisconnected { player_id: *player },
+                        ));
                     }
                 }
             }
@@ -121,15 +136,24 @@ fn server_update_system(
         while let Some(message) =
             server.receive_message(claimer_id.client_id, DefaultChannel::ReliableOrdered)
         {
-            let claim: CambioAction =
+            let claim: ClientClaim =
                 bincode::serde::decode_from_slice(&message, bincode::config::standard())
                     .unwrap()
                     .0;
 
-            to_validate.write(IncomingMessage(ServerMessage::StateUpdate {
-                claimer_id: *claimer_id,
-                action: claim,
-            }));
+            let server_message = match claim {
+                ClientClaim::PickUpCard { card_id } => ServerMessage::PickUpCard {
+                    actor: *claimer_id,
+                    card_id,
+                },
+                ClientClaim::DropCardOnSlot { card_id, slot_id } => ServerMessage::DropCardOnSlot {
+                    actor: *claimer_id,
+                    card_id,
+                    slot_id,
+                },
+            };
+
+            bus.incoming.push_back(IncomingMessage(server_message));
         }
     }
 
@@ -172,10 +196,12 @@ fn server_update_system(
 }
 
 fn broadcast_validated_updates(
-    mut validated: EventReader<ProcessedMessage>,
+    mut bus: ResMut<MessageBus>,
     mut server: ResMut<RenetServer>,
+    mut processed_history: ResMut<ProcessedHistory>,
 ) {
-    for ProcessedMessage(message) in validated.read() {
-        server.broadcast_message_typed(message.clone());
+    for ProcessedMessage(msg) in bus.processed.drain(..) {
+        processed_history.0.push(ProcessedMessage(msg.clone()));
+        server.broadcast_message_typed(msg.clone());
     }
 }

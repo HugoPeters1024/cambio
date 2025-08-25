@@ -10,11 +10,10 @@ mod cards;
 mod client;
 mod messages;
 mod server;
+mod utils;
 
 use crate::assets::*;
 use crate::cambio::CambioPlugin;
-use crate::cambio::MyPlayer;
-use crate::cambio::PlayerId;
 use crate::cards::*;
 use crate::client::ClientPlugin;
 use crate::server::ServerPlugin;
@@ -38,8 +37,8 @@ fn main() {
     if is_host {
         app.add_plugins(MinimalPlugins);
         app.add_plugins(bevy::log::LogPlugin::default());
-        app.add_plugins(ServerPlugin);
         app.add_plugins(CambioPlugin);
+        app.add_plugins(ServerPlugin);
     } else {
         app.add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -57,38 +56,14 @@ fn main() {
             unfocused_mode: UpdateMode::Continuous,
             ..default()
         });
-        app.add_plugins(ClientPlugin);
         app.add_plugins(CambioPlugin);
+        app.add_plugins(ClientPlugin);
 
         app.add_plugins((GameAssetPlugin, CardPlugin));
-
-        app.add_systems(OnEnter(GamePhase::Playing), setup);
-        app.add_systems(Update, update_player_idx_text);
     }
 
     app.add_systems(Update, panic_on_error_system);
     app.run();
-}
-
-fn setup(mut commands: Commands) {
-    commands.spawn((
-        Camera2d,
-        Projection::Orthographic(OrthographicProjection {
-            scaling_mode: bevy::render::camera::ScalingMode::FixedVertical {
-                viewport_height: 480.0,
-            },
-            ..OrthographicProjection::default_2d()
-        }),
-    ));
-
-    commands.spawn((Text::from("You are player: ..."), PlayerIdxText));
-}
-
-fn update_player_idx_text(
-    me: Single<&PlayerId, With<MyPlayer>>,
-    mut text: Single<&mut Text, With<PlayerIdxText>>,
-) {
-    text.0 = format!("You are player: {}", me.player_number);
 }
 
 // If any error is found we just panic

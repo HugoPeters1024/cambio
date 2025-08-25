@@ -10,6 +10,7 @@ bincode = { version = "2.0.1", features = ["serde"] }
 renet = "1.0.0"
 serde = { version = "1.0.219", features = ["derive"] }
 bevy_editor_pls = { git = "https://github.com/jakobhellermann/bevy_editor_pls", rev = "4e221566cad71419e907fb90da2dde109fbcf9f2" }
+num-traits = "0.2.19"
 
 # Native-only dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

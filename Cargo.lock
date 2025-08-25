@@ -2131,6 +2131,7 @@ dependencies = [
  "bevy_matchbox",
  "bevy_renet",
  "bincode 2.0.1",
+ "num-traits",
  "renet 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
 ]

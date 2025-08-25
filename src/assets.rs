@@ -17,6 +17,9 @@ pub struct GameAssets {
 
     #[asset(path = "card_back.jpg")]
     pub card_back: Handle<Image>,
+
+    #[asset(path = "reveal.png")]
+    pub reveal_sprite: Handle<Image>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Default, States)]
