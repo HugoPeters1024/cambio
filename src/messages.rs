@@ -11,6 +11,8 @@ pub enum ClientClaim {
     PickUpCard { card_id: CardId },
     DropCardOnSlot { card_id: CardId, slot_id: SlotId },
     LookAtCard { card_id: CardId },
+    TakeFreshCardFromDeck,
+    DropCardOnDiscardPile { card_id: CardId },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -33,7 +35,7 @@ pub enum ServerMessage {
     RevealCard {
         actor: PlayerId,
         card_id: CardId,
-        value: KnownCard,
+        value: Option<KnownCard>,
     },
     PickUpCard {
         actor: PlayerId,
@@ -44,6 +46,34 @@ pub enum ServerMessage {
         card_id: CardId,
         slot_id: SlotId,
     },
+    TakeFreshCardFromDeck {
+        actor: PlayerId,
+        card_id: CardId,
+    },
+    DropCardOnDiscardPile {
+        actor: PlayerId,
+        card_id: CardId,
+    },
+}
+
+impl ServerMessage {
+    pub fn redacted_for(&self, player_id: &PlayerId) -> ServerMessage {
+        match self {
+            ServerMessage::RevealCard { actor, card_id, .. } => {
+                // Only the actor can see the card
+                if actor == player_id {
+                    self.clone()
+                } else {
+                    ServerMessage::RevealCard {
+                        actor: *player_id,
+                        card_id: *card_id,
+                        value: None,
+                    }
+                }
+            }
+            _ => self.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Component)]

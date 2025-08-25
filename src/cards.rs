@@ -38,7 +38,7 @@ pub struct KnownCard {
 }
 
 #[derive(Debug, Component, PartialEq, Eq, Clone, Copy, Default)]
-#[require(Transform, Sprite, Pickable)]
+#[require(Transform, Sprite)]
 pub struct SomeCard;
 
 #[derive(Debug, Component, Default)]
@@ -87,7 +87,7 @@ fn on_spawn_slot(trigger: Trigger<OnAdd, CardSlot>, mut commands: Commands) {
     commands
         .entity(trigger.target())
         .insert((Sprite::from_color(
-            Color::linear_rgb(0.0, 0.2, 0.0),
-            Vec2::new(DESIRED_CARD_WIDTH, DESIRED_CARD_HEIGHT),
+            Color::srgb(0.0, 0.2, 0.0),
+            Vec2::new(DESIRED_CARD_WIDTH + 4.0, DESIRED_CARD_HEIGHT + 4.0),
         ),));
 }

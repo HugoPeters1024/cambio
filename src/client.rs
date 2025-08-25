@@ -81,6 +81,7 @@ impl Plugin for ClientPlugin {
         app.add_observer(on_player_spawn);
         app.add_observer(click_card);
         app.add_observer(click_slot);
+        app.add_observer(click_discard_pile);
 
         app.add_systems(OnEnter(GamePhase::Playing), setup);
         app.add_systems(Update, update_player_idx_text);
@@ -122,13 +123,36 @@ fn setup(mut commands: Commands, state: Res<CambioState>, assets: Res<GameAssets
     commands.spawn((Text::from("You are player: ..."), PlayerIdxText));
 
     commands
-        .entity(state.root)
-        .with_child((
+        .spawn((
             Sprite::from_image(assets.reveal_sprite.clone()),
             Transform::from_xyz(90.0, 0.0, 0.0),
             Pickable::default(),
+            ChildOf(state.root),
         ))
         .observe(click_reveal_button);
+
+    let deck_of_cards = commands
+        .spawn((
+            Transform::from_xyz(-90.0, 0.0, 0.0),
+            InheritedVisibility::default(),
+            ChildOf(state.root),
+            Pickable::default(),
+        ))
+        .observe(click_deck)
+        .id();
+
+    for x in 0..8 {
+        commands.spawn((
+            Sprite {
+                custom_size: Some(Vec2::new(DESIRED_CARD_WIDTH, DESIRED_CARD_HEIGHT)),
+                ..Sprite::from_image(assets.card_back.clone())
+            },
+            Transform::from_xyz(x as f32, (x % 3) as f32 - 1.0, 0.01 * x as f32)
+                .with_rotation(Quat::from_rotation_z(x as f32 / 60.0)),
+            Pickable::default(),
+            ChildOf(deck_of_cards),
+        ));
+    }
 }
 
 fn update_player_idx_text(
@@ -222,6 +246,30 @@ fn click_card(
             trigger.propagate(false);
         }
     }
+}
+
+fn click_discard_pile(
+    trigger: Trigger<Pointer<Click>>,
+    discard_pile: Query<Entity, With<DiscardPile>>,
+    me: Single<&PlayerId, With<MyPlayer>>,
+    held: Query<(Entity, &IsHeldBy, &CardId)>,
+    mut client: ResMut<RenetClient>,
+) {
+    let Ok(discard_pile_entity) = discard_pile.get(trigger.target()) else {
+        return;
+    };
+
+    let Some((card_entity, held_by, &card_id)) =
+        held.iter().find(|(_, held_by, _)| &held_by.0 == *me)
+    else {
+        return;
+    };
+
+    client.send_claim(ClientClaim::DropCardOnDiscardPile { card_id });
+}
+
+fn click_deck(_trigger: Trigger<Pointer<Click>>, mut client: ResMut<RenetClient>) {
+    client.send_claim(ClientClaim::TakeFreshCardFromDeck);
 }
 
 fn click_slot(

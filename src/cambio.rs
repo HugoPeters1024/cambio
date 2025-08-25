@@ -41,6 +41,12 @@ pub struct SlotId(pub u64);
 pub struct MyPlayer;
 
 #[derive(Component)]
+pub struct CambioRoot;
+
+#[derive(Component)]
+pub struct DiscardPile;
+
+#[derive(Component)]
 #[require(Transform, InheritedVisibility)]
 pub struct PlayerState {
     pub last_mouse_pos_world: Vec2,
@@ -86,8 +92,21 @@ fn setup_game_resource(mut commands: Commands) {
             Name::new("Cambio"),
             InheritedVisibility::default(),
             Transform::default(),
+            CambioRoot,
         ))
         .id();
+
+    commands.spawn((
+        Name::new("Discard Pile"),
+        DiscardPile,
+        Transform::from_xyz(0.0, 0.0, 0.0),
+        ChildOf(root),
+        Sprite::from_color(
+            Color::srgb(0.0, 0.0, 0.2),
+            Vec2::new(DESIRED_CARD_WIDTH, DESIRED_CARD_HEIGHT),
+        ),
+        Pickable::default(),
+    ));
 
     let state = CambioState {
         root,
@@ -122,6 +141,7 @@ pub fn process_single_event(
     held: Query<(Entity, &IsHeldBy)>,
     card_ids: Query<&CardId>,
     children: Query<&Children>,
+    discard_pile: Single<Entity, With<DiscardPile>>,
     mut commands: Commands,
 ) -> Option<ProcessedMessage> {
     println!("Processing message: {:?}", msg);
@@ -215,8 +235,9 @@ pub fn process_single_event(
                     SomeCard,
                     Name::new(format!("Card {}", card_id.0)),
                     card_id,
-                    Transform::from_xyz(3.0, 3.0, 1.0),
+                    Transform::from_xyz(0.0, 0.0, 1.0),
                     ChildOf(slot_entity),
+                    Pickable::default(),
                 ))
                 .id();
 
@@ -286,7 +307,7 @@ pub fn process_single_event(
                 .remove::<KnownCard>()
                 .insert(ChildOf(slot_entity))
                 .insert(Pickable::default())
-                .insert(Transform::from_xyz(3.0, 3.0, 1.0));
+                .insert(Transform::from_xyz(0.0, 0.0, 1.0));
         }
         ServerMessage::RevealCard {
             actor,
@@ -312,7 +333,55 @@ pub fn process_single_event(
                 return None;
             }
 
-            commands.entity(card_entity).insert(known_card);
+            if let Some(known_card) = known_card {
+                commands.entity(card_entity).insert(known_card);
+            }
+        }
+        ServerMessage::TakeFreshCardFromDeck { actor, card_id } => {
+            if held.iter().any(|held| held.1.0 == actor) {
+                warn!(
+                    "Player {} is already holding a card.",
+                    actor.player_number()
+                );
+                return None;
+            }
+
+            let card_entity = commands.spawn((
+                SomeCard,
+                card_id,
+                Name::new(format!("Card {}", card_id.0)),
+                IsHeldBy(actor),
+                Transform::from_xyz(0.0, 0.0, 10.0),
+            ));
+
+            state.card_index.insert(card_id, card_entity.id());
+        }
+        ServerMessage::DropCardOnDiscardPile { actor, card_id } => {
+            let Some(&card_entity) = state.card_index.get(&card_id) else {
+                warn!("Card not found.");
+                return None;
+            };
+
+            let Ok((_, held_by)) = held.get(card_entity) else {
+                warn!("Card not held by anyone.");
+                return None;
+            };
+
+            if held_by.0 != actor {
+                warn!(
+                    "Player {} is not holding the card, Player {} is.",
+                    actor.player_number(),
+                    held_by.0.player_number()
+                );
+                return None;
+            }
+
+            commands
+                .entity(card_entity)
+                .remove::<IsHeldBy>()
+                .remove::<KnownCard>()
+                .insert(ChildOf(*discard_pile))
+                .insert(Transform::from_xyz(0.0, 0.0, 1.0));
         }
     }
 

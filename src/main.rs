@@ -39,6 +39,7 @@ fn main() {
         app.add_plugins(bevy::log::LogPlugin::default());
         app.add_plugins(CambioPlugin);
         app.add_plugins(ServerPlugin);
+        app.insert_resource(Time::<Fixed>::from_hz(300.0));
     } else {
         app.add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {

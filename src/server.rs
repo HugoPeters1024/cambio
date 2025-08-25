@@ -14,17 +14,10 @@ use crate::messages::*;
 use crate::utils::Seq;
 
 trait ServerExt {
-    fn broadcast_message_typed(&mut self, message: ServerMessage);
-
     fn send_message_typed(&mut self, client_id: ClientId, message: ServerMessage);
 }
 
 impl ServerExt for RenetServer {
-    fn broadcast_message_typed(&mut self, message: ServerMessage) {
-        let encoded = bincode::serde::encode_to_vec(message, bincode::config::standard()).unwrap();
-        self.broadcast_message(DefaultChannel::ReliableOrdered, encoded);
-    }
-
     fn send_message_typed(&mut self, client_id: ClientId, message: ServerMessage) {
         let encoded = bincode::serde::encode_to_vec(message, bincode::config::standard()).unwrap();
         self.send_message(client_id, DefaultChannel::ReliableOrdered, encoded);
@@ -55,7 +48,7 @@ impl Default for CardDeck {
 }
 
 impl CardDeck {
-    fn generate(&mut self) -> CardId {
+    fn take_card(&mut self) -> CardId {
         CardId(self.seq.generate())
     }
 
@@ -76,7 +69,7 @@ impl Plugin for ServerPlugin {
         app.init_resource::<ProcessedHistory>();
 
         app.add_systems(
-            Update,
+            FixedUpdate,
             (
                 server_update_system.before(process_messages),
                 broadcast_validated_updates.after(process_messages),
@@ -149,7 +142,7 @@ fn server_update_system(
                         .push_back(IncomingMessage(ServerMessage::ReceiveFreshCard {
                             actor: new_player_id,
                             slot_id,
-                            card_id: deck.generate(),
+                            card_id: deck.take_card(),
                         }));
                 }
             }
@@ -187,8 +180,18 @@ fn server_update_system(
                 ClientClaim::LookAtCard { card_id } => ServerMessage::RevealCard {
                     actor: *claimer_id,
                     card_id,
-                    value: deck.get_card(&card_id),
+                    value: Some(deck.get_card(&card_id)),
                 },
+                ClientClaim::TakeFreshCardFromDeck => ServerMessage::TakeFreshCardFromDeck {
+                    actor: *claimer_id,
+                    card_id: deck.take_card(),
+                },
+                ClientClaim::DropCardOnDiscardPile { card_id } => {
+                    ServerMessage::DropCardOnDiscardPile {
+                        actor: *claimer_id,
+                        card_id,
+                    }
+                }
             };
 
             bus.incoming.push_back(IncomingMessage(server_message));
@@ -237,9 +240,12 @@ fn broadcast_validated_updates(
     mut bus: ResMut<MessageBus>,
     mut server: ResMut<RenetServer>,
     mut processed_history: ResMut<ProcessedHistory>,
+    state: Res<CambioState>,
 ) {
     for ProcessedMessage(msg) in bus.processed.drain(..) {
         processed_history.0.push(ProcessedMessage(msg.clone()));
-        server.broadcast_message_typed(msg.clone());
+        for player_id in state.player_index.keys() {
+            server.send_message_typed(player_id.client_id, msg.redacted_for(player_id));
+        }
     }
 }
