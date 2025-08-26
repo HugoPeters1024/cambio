@@ -149,10 +149,13 @@ fn server_update_system(
                         }));
                 }
 
-                bus.incoming
-                    .push_back(IncomingMessage(ServerMessage::PlayerAtTurn {
-                        player_id: new_player_id,
-                    }));
+                // If this is the first player, start the game
+                if state.player_index.is_empty() {
+                    bus.incoming
+                        .push_back(IncomingMessage(ServerMessage::PlayerAtTurn {
+                            player_id: new_player_id,
+                        }));
+                }
             }
             ServerEvent::ClientDisconnected { client_id, .. } => {
                 for player in state.player_index.keys() {
@@ -176,9 +179,9 @@ fn server_update_system(
                     .0;
 
             let server_message = match claim {
-                ClientClaim::PickUpCard { card_id } => ServerMessage::PickUpCard {
+                ClientClaim::PickUpSlotCard { slot_id } => ServerMessage::PickUpSlotCard {
                     actor: *claimer_id,
-                    card_id,
+                    slot_id,
                 },
                 ClientClaim::DropCardOnSlot { card_id, slot_id } => ServerMessage::DropCardOnSlot {
                     actor: *claimer_id,
@@ -209,6 +212,12 @@ fn server_update_system(
                 }
                 ClientClaim::TakeCardFromDiscardPile => {
                     ServerMessage::TakeCardFromDiscardPile { actor: *claimer_id }
+                }
+                ClientClaim::SwapHeldCardWithSlotCard { slot_id } => {
+                    ServerMessage::SwapHeldCardWithSlotCard {
+                        actor: *claimer_id,
+                        slot_id,
+                    }
                 }
             };
 

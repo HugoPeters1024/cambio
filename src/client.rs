@@ -85,7 +85,7 @@ impl Plugin for ClientPlugin {
         }
 
         app.add_observer(on_player_spawn);
-        app.add_observer(click_card);
+        app.add_observer(click_slot_card);
         app.add_observer(click_slot);
         app.add_observer(click_discard_pile);
 
@@ -243,16 +243,25 @@ fn sync_held_by(
     }
 }
 
-fn click_card(
+fn click_slot_card(
     mut trigger: Trigger<Pointer<Click>>,
+    me: Single<&PlayerId, With<MyPlayer>>,
     cards: Query<&CardId>,
     held: Query<&IsHeldBy>,
+    slot_ids: Query<&SlotId>,
+    parents: Query<&ChildOf>,
     mut client: ResMut<RenetClient>,
 ) {
     if let Ok(card) = cards.get(trigger.target()) {
-        if !held.contains(trigger.target()) {
-            client.send_claim(ClientClaim::PickUpCard { card_id: *card });
-            trigger.propagate(false);
+        if let Ok(ChildOf(parent_entity)) = parents.get(trigger.target()) {
+            if let Ok(slot_id) = slot_ids.get(*parent_entity) {
+                if !held.iter().any(|held| held.0 == **me) {
+                    client.send_claim(ClientClaim::PickUpSlotCard { slot_id: *slot_id });
+                } else {
+                    client.send_claim(ClientClaim::SwapHeldCardWithSlotCard { slot_id: *slot_id });
+                }
+                trigger.propagate(false);
+            }
         }
     }
 }
@@ -286,25 +295,17 @@ fn click_slot(
     me: Single<&PlayerId, With<MyPlayer>>,
     slots: Query<(Entity, &SlotId), With<CardSlot>>,
     cards: Query<&CardId>,
-    children: Query<&Children>,
     holders: Query<(Entity, &IsHeldBy)>,
     mut client: ResMut<RenetClient>,
 ) {
-    if let Ok((slot_entity, slot_id)) = slots.get(trigger.target()) {
+    if let Ok((_, slot_id)) = slots.get(trigger.target()) {
         if let Some((holding_card, _)) = holders.iter().filter(|h| h.1.0 == **me).next() {
-            if children
-                .iter_descendants(slot_entity)
-                .filter(|c| cards.contains(*c))
-                .next()
-                .is_none()
-            {
-                let card_id = *cards.get(holding_card).unwrap();
-                client.send_claim(ClientClaim::DropCardOnSlot {
-                    card_id: card_id,
-                    slot_id: *slot_id,
-                });
-                trigger.propagate(false);
-            }
+            let card_id = *cards.get(holding_card).unwrap();
+            client.send_claim(ClientClaim::DropCardOnSlot {
+                card_id: card_id,
+                slot_id: *slot_id,
+            });
+            trigger.propagate(false);
         }
     }
 }

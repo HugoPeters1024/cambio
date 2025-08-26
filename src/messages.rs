@@ -8,12 +8,13 @@ use crate::{
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ClientClaim {
-    PickUpCard { card_id: CardId },
+    PickUpSlotCard { slot_id: SlotId },
     DropCardOnSlot { card_id: CardId, slot_id: SlotId },
     LookAtCard { card_id: CardId },
     TakeFreshCardFromDeck,
     DropHeldCardOnDiscardPile { card_id: CardId },
     TakeCardFromDiscardPile,
+    SwapHeldCardWithSlotCard { slot_id: SlotId },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -38,9 +39,13 @@ pub enum ServerMessage {
         card_id: CardId,
         value: Option<KnownCard>,
     },
-    PickUpCard {
+    PickUpSlotCard {
         actor: PlayerId,
-        card_id: CardId,
+        slot_id: SlotId,
+    },
+    SwapHeldCardWithSlotCard {
+        actor: PlayerId,
+        slot_id: SlotId,
     },
     DropCardOnSlot {
         actor: PlayerId,

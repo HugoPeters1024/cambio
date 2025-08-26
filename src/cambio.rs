@@ -1,10 +1,11 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
 use bevy_renet::renet::ClientId;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::ops::DerefMut;
 
 use crate::{
     assets::{DESIRED_CARD_HEIGHT, DESIRED_CARD_WIDTH},
@@ -45,8 +46,17 @@ pub struct SlotId(pub u64);
 #[derive(Component)]
 pub struct MyPlayer;
 
+#[derive(Debug, PartialEq, Eq)]
+enum TurnState {
+    Start,
+    TookDeckCard,
+    TookDiscardedCard,
+    SwappedCard,
+    Finished,
+}
+
 #[derive(Component)]
-pub struct PlayerAtTurn;
+pub struct PlayerAtTurn(pub TurnState);
 
 #[derive(Component)]
 pub struct CambioRoot;
@@ -60,7 +70,7 @@ pub struct DiscardPile {
 #[require(Transform, InheritedVisibility)]
 pub struct PlayerState {
     pub last_mouse_pos_world: Vec2,
-    pub slots: Vec<Entity>,
+    pub slots: HashSet<Entity>,
 }
 
 #[derive(Resource)]
@@ -69,7 +79,6 @@ pub struct CambioState {
     pub card_index: HashMap<CardId, Entity>,
     pub slot_index: HashMap<SlotId, Entity>,
     pub player_index: HashMap<PlayerId, Entity>,
-    pub player_at_turn: Option<PlayerId>,
 }
 
 #[derive(Debug)]
@@ -126,7 +135,6 @@ fn setup_game_resource(mut commands: Commands) {
         card_index: HashMap::new(),
         slot_index: HashMap::new(),
         player_index: HashMap::new(),
-        player_at_turn: None,
     };
 
     commands.insert_resource(state);
@@ -156,7 +164,7 @@ pub fn process_single_event(
     card_ids: Query<&CardId>,
     children: Query<&Children>,
     mut discard_pile: Single<(Entity, &mut DiscardPile)>,
-    player_at_turn: Query<Entity, With<PlayerAtTurn>>,
+    mut player_at_turn: Query<(Entity, &mut PlayerAtTurn)>,
     mut commands: Commands,
 ) -> Option<ProcessedMessage> {
     println!("Processing message: {:?}", msg);
@@ -171,12 +179,60 @@ pub fn process_single_event(
         }};
     }
 
+    macro_rules! card_exists {
+        ($card_id: expr) => {{
+            let Some(card_entity) = state.card_index.get(&$card_id) else {
+                warn!("Card {} does not exist.", $card_id.0);
+                return None;
+            };
+            card_entity
+        }};
+    }
+
+    macro_rules! slot_exists {
+        ($slot_id: expr) => {{
+            let Some(slot_entity) = state.slot_index.get(&$slot_id) else {
+                warn!("Slot {} does not exist.", $slot_id.0);
+                return None;
+            };
+            slot_entity
+        }};
+    }
+
+    macro_rules! try_get_slot_card {
+        ($slot_id: expr) => {{
+            let &slot_entity = slot_exists!($slot_id);
+            let mut found = None;
+            for child in children.iter_descendants(slot_entity) {
+                if let Ok(card_id) = card_ids.get(child) {
+                    found = Some(*card_id);
+                }
+            }
+            found
+        }};
+    }
+
+    macro_rules! try_get_held_card {
+        ($player_id: expr) => {
+            if let Some((held_card, _)) = held.iter().find(|(_, held_by)| held_by.0 == $player_id) {
+                Some(held_card)
+            } else {
+                None
+            }
+        };
+    }
+
     macro_rules! has_turn {
         ($player_id: expr) => {{
-            if Some($player_id) != state.player_at_turn {
-                warn!("Player {} is acting out of turn.", $player_id.player_number());
+            let &player_entity = player_exists!($player_id);
+            let Ok((_, _)) = player_at_turn.get(player_entity) else {
+                warn!(
+                    "Player {} is acting out of turn.",
+                    $player_id.player_number()
+                );
                 return None;
-            }
+            };
+            &mut player_at_turn.get_mut(player_entity).unwrap().1.0
         }};
     }
 
@@ -192,7 +248,7 @@ pub fn process_single_event(
                     player_id,
                     PlayerState {
                         last_mouse_pos_world: Vec2::ZERO,
-                        slots: Vec::new(),
+                        slots: HashSet::new(),
                     },
                     Name::new(format!("Player {}", player_id.player_number())),
                     Transform::from_xyz(x, y, 0.0),
@@ -241,7 +297,7 @@ pub fn process_single_event(
                 ))
                 .id();
 
-            player.slots.push(slot_entity);
+            player.slots.insert(slot_entity);
             state.slot_index.insert(slot_id, slot_entity);
         }
         ServerMessage::ReceiveFreshCard {
@@ -249,10 +305,7 @@ pub fn process_single_event(
             slot_id,
             card_id,
         } => {
-            let Some(&slot_entity) = state.slot_index.get(&slot_id) else {
-                warn!("Slot not found.");
-                return None;
-            };
+            let &slot_entity = slot_exists!(slot_id);
 
             if children
                 .iter_descendants(slot_entity)
@@ -275,7 +328,7 @@ pub fn process_single_event(
 
             state.card_index.insert(card_id, card_entity);
         }
-        ServerMessage::PickUpCard { actor, card_id } => {
+        ServerMessage::PickUpSlotCard { actor, slot_id } => {
             if held.iter().any(|held| held.1.0 == actor) {
                 warn!(
                     "Player {} is already holding a card.",
@@ -284,10 +337,12 @@ pub fn process_single_event(
                 return None;
             }
 
-            let Some(card_entity) = state.card_index.get(&card_id) else {
-                warn!("Card not found.");
+            let Some(card_id) = try_get_slot_card!(slot_id) else {
+                warn!("Slot is empty.");
                 return None;
             };
+
+            let card_entity = card_exists!(card_id);
 
             if held.contains(*card_entity) {
                 warn!("Card already held.");
@@ -309,15 +364,9 @@ pub fn process_single_event(
             card_id,
             slot_id,
         } => {
-            let Some(&card_entity) = state.card_index.get(&card_id) else {
-                warn!("Card not found.");
-                return None;
-            };
-
-            let Some(&slot_entity) = state.slot_index.get(&slot_id) else {
-                error!("Slot index corrupted.");
-                return None;
-            };
+            let player_entity = player_exists!(actor);
+            let &slot_entity = slot_exists!(slot_id);
+            let &card_entity = card_exists!(card_id);
 
             let Ok((_, held_by)) = held.get(card_entity) else {
                 warn!("Card not held by anyone.");
@@ -330,6 +379,24 @@ pub fn process_single_event(
                     actor.player_number(),
                     held_by.0.player_number()
                 );
+                return None;
+            }
+
+            let Ok(player_state) = players.get_mut(*player_entity) else {
+                error!("Player index corrupted");
+                return None;
+            };
+
+            if !player_state.slots.contains(&slot_entity) {
+                warn!("Cannot drop a card on another player's slot.");
+                return None;
+            }
+
+            if children
+                .iter_descendants(slot_entity)
+                .any(|c| card_ids.contains(c))
+            {
+                warn!("Slot already has a card.");
                 return None;
             }
 
@@ -346,10 +413,8 @@ pub fn process_single_event(
             card_id,
             value: known_card,
         } => {
-            let Some(&card_entity) = state.card_index.get(&card_id) else {
-                warn!("Card not found.");
-                return None;
-            };
+            player_exists!(actor);
+            let &card_entity = card_exists!(card_id);
 
             let Ok((_, held_by)) = held.get(card_entity) else {
                 warn!("Card not held by anyone.");
@@ -370,7 +435,16 @@ pub fn process_single_event(
             }
         }
         ServerMessage::TakeFreshCardFromDeck { actor, card_id } => {
-            has_turn!(actor);
+            let player_entity = player_exists!(actor);
+            let turn_state = has_turn!(actor);
+
+            if *turn_state != TurnState::Start {
+                warn!(
+                    "Can only take cards at the start of a turn, but turn state is {:?}.",
+                    turn_state
+                );
+                return None;
+            }
 
             if held.iter().any(|held| held.1.0 == actor) {
                 warn!(
@@ -380,6 +454,7 @@ pub fn process_single_event(
                 return None;
             }
 
+            *turn_state = TurnState::TookDeckCard;
             let card_entity = commands.spawn((
                 SomeCard,
                 card_id,
@@ -396,10 +471,8 @@ pub fn process_single_event(
             value,
             local_transform,
         } => {
-            let Some(&card_entity) = state.card_index.get(&card_id) else {
-                warn!("Card not found.");
-                return None;
-            };
+            let &player_entity = player_exists!(actor);
+            let &card_entity = card_exists!(card_id);
 
             let Ok((_, held_by)) = held.get(card_entity) else {
                 warn!("Card not held by anyone.");
@@ -413,6 +486,23 @@ pub fn process_single_event(
                     held_by.0.player_number()
                 );
                 return None;
+            }
+
+            if let Ok((_, mut turn_state)) = player_at_turn.get_mut(player_entity) {
+                match turn_state.0 {
+                    TurnState::TookDeckCard => {
+                        turn_state.0 = TurnState::Finished;
+                    }
+                    TurnState::TookDiscardedCard => {
+                        warn!("Cannot discard a card that was just taken from the discard pile.");
+                        return None;
+                    }
+                    TurnState::Start => {}
+                    TurnState::Finished => {}
+                    TurnState::SwappedCard => {
+                        turn_state.0 = TurnState::Finished;
+                    }
+                }
             }
 
             let mut transform = local_transform;
@@ -431,15 +521,25 @@ pub fn process_single_event(
         ServerMessage::PlayerAtTurn { player_id } => {
             let &player_entity = player_exists!(player_id);
 
-            state.player_at_turn = Some(player_id);
-            for entity in player_at_turn.iter() {
+            for (entity, _) in player_at_turn.iter() {
                 commands.entity(entity).remove::<PlayerAtTurn>();
             }
-            commands.entity(player_entity).insert(PlayerAtTurn);
+            commands
+                .entity(player_entity)
+                .insert(PlayerAtTurn(TurnState::Start));
         }
         ServerMessage::TakeCardFromDiscardPile { actor } => {
             let &_player_entity = player_exists!(actor);
-            has_turn!(actor);
+            let turn_state = has_turn!(actor);
+
+            if *turn_state != TurnState::Start {
+                warn!(
+                    "Can only take cards at the start of a turn, but turn state is {:?}.",
+                    turn_state
+                );
+                return None;
+            }
+            *turn_state = TurnState::TookDiscardedCard;
 
             if held.iter().any(|held| held.1.0 == actor) {
                 warn!(
@@ -457,8 +557,71 @@ pub fn process_single_event(
             commands
                 .entity(card_entity)
                 .insert(IsHeldBy(actor))
-                .insert(Transform::from_xyz(0.0, 0.0, 1.0))
+                .insert(Transform::from_xyz(0.0, 0.0, 10.0))
                 .remove::<ChildOf>();
+        }
+        ServerMessage::SwapHeldCardWithSlotCard { actor, slot_id } => {
+            let &player_entity = player_exists!(actor);
+            let &slot_entity = slot_exists!(slot_id);
+
+            let turn_state = has_turn!(actor);
+            match turn_state {
+                TurnState::TookDeckCard => {
+                    *turn_state = TurnState::SwappedCard;
+                }
+                TurnState::TookDiscardedCard => {
+                    *turn_state = TurnState::SwappedCard;
+                }
+                TurnState::Start => {
+                    warn!("Cannot swap a card at the start of a turn.");
+                    return None;
+                }
+                TurnState::Finished => {
+                    warn!("Cannot swap a card at the end of a turn.");
+                    return None;
+                }
+                TurnState::SwappedCard => {
+                    warn!("Cannot swap a card twice.");
+                    return None;
+                }
+            }
+
+            let Some(slot_card_id) = try_get_slot_card!(slot_id) else {
+                warn!("Slot is empty.");
+                return None;
+            };
+
+            let &slot_card_entity = card_exists!(slot_card_id);
+
+            let Some(held_card_entity) = try_get_held_card!(actor) else {
+                warn!("Player {} is not holding a card.", actor.player_number());
+                return None;
+            };
+
+            let Ok(player_state) = players.get_mut(player_entity) else {
+                error!("Player index corrupted");
+                return None;
+            };
+
+            if !player_state.slots.contains(&slot_entity) {
+                warn!("Cannot swap a card on another player's slot.");
+                return None;
+            }
+
+            commands
+                .entity(held_card_entity)
+                .remove::<IsHeldBy>()
+                .remove::<KnownCard>()
+                .insert(ChildOf(slot_entity))
+                .insert(Transform::from_xyz(0.0, 0.0, 1.0))
+                .insert(Pickable::default());
+
+            commands
+                .entity(slot_card_entity)
+                .remove::<ChildOf>()
+                .insert(IsHeldBy(actor))
+                .insert(Transform::from_xyz(0.0, 0.0, 10.0))
+                .remove::<Pickable>();
         }
     }
 
