@@ -1,7 +1,9 @@
 use std::collections::VecDeque;
 
 use bevy::{platform::collections::HashMap, prelude::*};
+use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
 use bevy_renet::renet::ClientId;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -22,6 +24,9 @@ impl PlayerId {
     pub fn player_number(&self) -> u8 {
         self.player_index + 1
     }
+    pub fn up_or_down(&self) -> f32 {
+        if self.player_index <= 2 { 1.0 } else { -1.0 }
+    }
 }
 
 #[derive(Component)]
@@ -41,10 +46,15 @@ pub struct SlotId(pub u64);
 pub struct MyPlayer;
 
 #[derive(Component)]
+pub struct PlayerAtTurn;
+
+#[derive(Component)]
 pub struct CambioRoot;
 
 #[derive(Component)]
-pub struct DiscardPile;
+pub struct DiscardPile {
+    pub cards: VecDeque<Entity>,
+}
 
 #[derive(Component)]
 #[require(Transform, InheritedVisibility)]
@@ -59,6 +69,7 @@ pub struct CambioState {
     pub card_index: HashMap<CardId, Entity>,
     pub slot_index: HashMap<SlotId, Entity>,
     pub player_index: HashMap<PlayerId, Entity>,
+    pub player_at_turn: Option<PlayerId>,
 }
 
 #[derive(Debug)]
@@ -98,7 +109,9 @@ fn setup_game_resource(mut commands: Commands) {
 
     commands.spawn((
         Name::new("Discard Pile"),
-        DiscardPile,
+        DiscardPile {
+            cards: VecDeque::new(),
+        },
         Transform::from_xyz(0.0, 0.0, 0.0),
         ChildOf(root),
         Sprite::from_color(
@@ -113,6 +126,7 @@ fn setup_game_resource(mut commands: Commands) {
         card_index: HashMap::new(),
         slot_index: HashMap::new(),
         player_index: HashMap::new(),
+        player_at_turn: None,
     };
 
     commands.insert_resource(state);
@@ -141,10 +155,31 @@ pub fn process_single_event(
     held: Query<(Entity, &IsHeldBy)>,
     card_ids: Query<&CardId>,
     children: Query<&Children>,
-    discard_pile: Single<Entity, With<DiscardPile>>,
+    mut discard_pile: Single<(Entity, &mut DiscardPile)>,
+    player_at_turn: Query<Entity, With<PlayerAtTurn>>,
     mut commands: Commands,
 ) -> Option<ProcessedMessage> {
     println!("Processing message: {:?}", msg);
+
+    macro_rules! player_exists {
+        ($player_id: expr) => {{
+            let Some(player_entity) = state.player_index.get(&$player_id) else {
+                warn!("Player {} does not exist.", $player_id.player_number());
+                return None;
+            };
+            player_entity
+        }};
+    }
+
+    macro_rules! has_turn {
+        ($player_id: expr) => {{
+            if Some($player_id) != state.player_at_turn {
+                warn!("Player {} is acting out of turn.", $player_id.player_number());
+                return None;
+            }
+        }};
+    }
+
     match msg {
         ServerMessage::PlayerConnected { player_id } => {
             println!("Player {} connected.", player_id.player_number());
@@ -175,10 +210,7 @@ pub fn process_single_event(
             state.player_index.remove(&player_id);
         }
         ServerMessage::ReceiveFreshSlot { actor, slot_id } => {
-            let Some(player_entity) = state.player_index.get(&actor) else {
-                warn!("Player not found.");
-                return None;
-            };
+            let player_entity = player_exists!(actor);
 
             let Ok(mut player) = players.get_mut(*player_entity) else {
                 error!("Player index corrupted");
@@ -338,6 +370,8 @@ pub fn process_single_event(
             }
         }
         ServerMessage::TakeFreshCardFromDeck { actor, card_id } => {
+            has_turn!(actor);
+
             if held.iter().any(|held| held.1.0 == actor) {
                 warn!(
                     "Player {} is already holding a card.",
@@ -356,7 +390,12 @@ pub fn process_single_event(
 
             state.card_index.insert(card_id, card_entity.id());
         }
-        ServerMessage::DropCardOnDiscardPile { actor, card_id } => {
+        ServerMessage::DropHeldCardOnDiscardPile {
+            actor,
+            card_id,
+            value,
+            local_transform,
+        } => {
             let Some(&card_entity) = state.card_index.get(&card_id) else {
                 warn!("Card not found.");
                 return None;
@@ -376,12 +415,50 @@ pub fn process_single_event(
                 return None;
             }
 
+            let mut transform = local_transform;
+            transform.translation.z = 0.1 + 0.1 * discard_pile.1.cards.len() as f32;
+
             commands
                 .entity(card_entity)
                 .remove::<IsHeldBy>()
                 .remove::<KnownCard>()
-                .insert(ChildOf(*discard_pile))
-                .insert(Transform::from_xyz(0.0, 0.0, 1.0));
+                .insert(value)
+                .insert(ChildOf(discard_pile.0))
+                .insert(transform);
+
+            discard_pile.1.cards.push_back(card_entity);
+        }
+        ServerMessage::PlayerAtTurn { player_id } => {
+            let &player_entity = player_exists!(player_id);
+
+            state.player_at_turn = Some(player_id);
+            for entity in player_at_turn.iter() {
+                commands.entity(entity).remove::<PlayerAtTurn>();
+            }
+            commands.entity(player_entity).insert(PlayerAtTurn);
+        }
+        ServerMessage::TakeCardFromDiscardPile { actor } => {
+            let &_player_entity = player_exists!(actor);
+            has_turn!(actor);
+
+            if held.iter().any(|held| held.1.0 == actor) {
+                warn!(
+                    "Player {} is already holding a card.",
+                    actor.player_number()
+                );
+                return None;
+            }
+
+            let Some(card_entity) = discard_pile.1.cards.pop_back() else {
+                warn!("Discard pile is empty.");
+                return None;
+            };
+
+            commands
+                .entity(card_entity)
+                .insert(IsHeldBy(actor))
+                .insert(Transform::from_xyz(0.0, 0.0, 1.0))
+                .remove::<ChildOf>();
         }
     }
 

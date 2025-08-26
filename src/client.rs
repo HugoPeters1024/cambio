@@ -1,4 +1,7 @@
-use std::{net::UdpSocket, time::SystemTime};
+use std::{
+    net::UdpSocket,
+    time::{Duration, SystemTime},
+};
 
 use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_renet::{
@@ -6,11 +9,15 @@ use bevy_renet::{
     netcode::{ClientAuthentication, NetcodeClientPlugin, NetcodeClientTransport},
     renet::{ConnectionConfig, DefaultChannel, RenetClient},
 };
+use bevy_tweening::{Animator, RepeatCount, RepeatStrategy, Tween, lens::TransformPositionLens};
 
 use crate::assets::*;
 use crate::cambio::*;
 use crate::messages::*;
 use crate::{PlayerIdxText, cards::*};
+
+#[derive(Component)]
+struct PlayerTurnIcon;
 
 pub trait ClientExt {
     fn send_claim(&mut self, claim: ClientClaim);
@@ -48,7 +55,8 @@ impl Plugin for ClientPlugin {
                 sync_held_by,
             )
                 .chain())
-            .run_if(client_connected),
+            .run_if(client_connected)
+            .run_if(in_state(GamePhase::Playing)),
         );
 
         fn on_player_spawn(
@@ -64,16 +72,14 @@ impl Plugin for ClientPlugin {
                 commands.entity(trigger.target()).insert(MyPlayer);
             }
 
-            let up_or_down = if player_id.player_index <= 2 {
-                1.0
-            } else {
-                -1.0
-            };
-
             commands.entity(trigger.target()).with_child((
                 Text2d::new(format!("Player {}", player_id.player_number())),
                 TextFont::from_font_size(14.0),
-                Transform::from_xyz(0.0, (DESIRED_CARD_HEIGHT + 15.0) * up_or_down, 1.0),
+                Transform::from_xyz(
+                    0.0,
+                    (DESIRED_CARD_HEIGHT + 15.0) * player_id.up_or_down(),
+                    1.0,
+                ),
                 TextColor(Color::WHITE),
             ));
         }
@@ -110,6 +116,9 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
 }
 
 fn setup(mut commands: Commands, state: Res<CambioState>, assets: Res<GameAssets>) {
+    commands.add_observer(on_player_turn_added);
+    commands.add_observer(on_player_turn_removed);
+
     commands.spawn((
         Camera2d,
         Projection::Orthographic(OrthographicProjection {
@@ -259,13 +268,13 @@ fn click_discard_pile(
         return;
     };
 
-    let Some((card_entity, held_by, &card_id)) =
+    if let Some((card_entity, held_by, &card_id)) =
         held.iter().find(|(_, held_by, _)| &held_by.0 == *me)
-    else {
-        return;
+    {
+        client.send_claim(ClientClaim::DropHeldCardOnDiscardPile { card_id });
+    } else {
+        client.send_claim(ClientClaim::TakeCardFromDiscardPile);
     };
-
-    client.send_claim(ClientClaim::DropCardOnDiscardPile { card_id });
 }
 
 fn click_deck(_trigger: Trigger<Pointer<Click>>, mut client: ResMut<RenetClient>) {
@@ -311,5 +320,55 @@ fn click_reveal_button(
         let card_id = *cards.get(holding_card).unwrap();
         client.send_claim(ClientClaim::LookAtCard { card_id });
         trigger.propagate(false);
+    }
+}
+
+fn on_player_turn_added(
+    trigger: Trigger<OnAdd, PlayerAtTurn>,
+    mut commands: Commands,
+    players: Query<&PlayerId>,
+    assets: Res<GameAssets>,
+) {
+    let Ok(player_id) = players.get(trigger.target()) else {
+        return;
+    };
+
+    let up_down_tween = Tween::new(
+        EaseFunction::QuadraticInOut,
+        Duration::from_secs(1),
+        TransformPositionLens {
+            start: Vec3::new(0.0, 110.0 * player_id.up_or_down(), 0.0),
+            end: Vec3::new(0.0, (120.0 + 20.0) * player_id.up_or_down(), 0.0),
+        },
+    )
+    .with_repeat_strategy(RepeatStrategy::MirroredRepeat)
+    .with_repeat_count(RepeatCount::Infinite);
+
+    commands.entity(trigger.target()).with_child((
+        PlayerTurnIcon,
+        Transform::from_scale(Vec3::splat(0.1)).with_translation(Vec3::new(0.0, 0.0, 30.0)),
+        Sprite::from_image(assets.arrow_down_sprite.clone()),
+        Animator::new(up_down_tween),
+        // drop shadow
+        children![(
+            Sprite {
+                color: Color::linear_rgba(0.0, 0.0, 0.0, 1.0),
+                ..Sprite::from_image(assets.arrow_down_sprite.clone())
+            },
+            Transform::from_xyz(5.0, -5.0, -1.0),
+        )],
+    ));
+}
+
+fn on_player_turn_removed(
+    trigger: Trigger<OnRemove, PlayerAtTurn>,
+    mut commands: Commands,
+    children: Query<&Children>,
+    icon: Query<Entity, With<PlayerTurnIcon>>,
+) {
+    for child in children.iter_descendants(trigger.target()) {
+        if let Ok(icon_entity) = icon.get(child) {
+            commands.entity(icon_entity).despawn();
+        }
     }
 }

@@ -20,6 +20,9 @@ pub struct GameAssets {
 
     #[asset(path = "reveal.png")]
     pub reveal_sprite: Handle<Image>,
+
+    #[asset(path = "arrow_down.png")]
+    pub arrow_down_sprite: Handle<Image>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Default, States)]

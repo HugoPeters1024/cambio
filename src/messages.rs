@@ -12,7 +12,8 @@ pub enum ClientClaim {
     DropCardOnSlot { card_id: CardId, slot_id: SlotId },
     LookAtCard { card_id: CardId },
     TakeFreshCardFromDeck,
-    DropCardOnDiscardPile { card_id: CardId },
+    DropHeldCardOnDiscardPile { card_id: CardId },
+    TakeCardFromDiscardPile,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -50,9 +51,20 @@ pub enum ServerMessage {
         actor: PlayerId,
         card_id: CardId,
     },
-    DropCardOnDiscardPile {
+    DropHeldCardOnDiscardPile {
         actor: PlayerId,
         card_id: CardId,
+        // not every player knows the value at
+        // this point yet, but this action reveals
+        // it for everyone.
+        value: KnownCard,
+        local_transform: Transform,
+    },
+    TakeCardFromDiscardPile {
+        actor: PlayerId,
+    },
+    PlayerAtTurn {
+        player_id: PlayerId,
     },
 }
 

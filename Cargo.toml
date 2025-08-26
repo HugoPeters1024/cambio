@@ -13,6 +13,10 @@ bevy_editor_pls = { git = "https://github.com/jakobhellermann/bevy_editor_pls", 
 num-traits = "0.2.19"
 strum = "0.27.2"
 strum_macros = "0.27.2"
+bevy_tweening = "0.13.0"
+bevy_rand = {version = "0.11.3", features = ["wyrand"]}
+rand_core = "0.9.3"
+rand = "0.9.2"
 
 # Native-only dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -21,6 +25,7 @@ bevy_renet = { git = "https://github.com/lucaspoffo/renet.git" }
 # Wasm-only dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 bevy_matchbox = "0.12.0"
+getrandom = { version = "0.3.3", features = ["wasm_js"] }
 
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]

@@ -33,6 +33,7 @@ fn main() {
     };
 
     let mut app = App::new();
+    app.add_plugins(bevy_rand::plugin::EntropyPlugin::<bevy_rand::prelude::WyRand>::default());
 
     if is_host {
         app.add_plugins(MinimalPlugins);
@@ -57,6 +58,7 @@ fn main() {
             unfocused_mode: UpdateMode::Continuous,
             ..default()
         });
+        app.add_plugins(bevy_tweening::TweeningPlugin);
         app.add_plugins(CambioPlugin);
         app.add_plugins(ClientPlugin);
 

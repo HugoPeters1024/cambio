@@ -1,11 +1,13 @@
 use std::{net::UdpSocket, time::SystemTime};
 
 use bevy::prelude::*;
+use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
 use bevy_renet::{
     RenetServerPlugin,
     netcode::{NetcodeServerPlugin, NetcodeServerTransport, ServerAuthentication, ServerConfig},
     renet::{ClientId, ConnectionConfig, DefaultChannel, RenetServer, ServerEvent},
 };
+use rand::Rng;
 use strum::IntoEnumIterator;
 
 use crate::cambio::*;
@@ -109,6 +111,7 @@ fn server_update_system(
     mut deck: Local<CardDeck>,
     mut bus: ResMut<MessageBus>,
     processed_history: Res<ProcessedHistory>,
+    mut entropy: GlobalEntropy<WyRand>,
 ) {
     for event in server_events.read() {
         match event {
@@ -145,6 +148,11 @@ fn server_update_system(
                             card_id: deck.take_card(),
                         }));
                 }
+
+                bus.incoming
+                    .push_back(IncomingMessage(ServerMessage::PlayerAtTurn {
+                        player_id: new_player_id,
+                    }));
             }
             ServerEvent::ClientDisconnected { client_id, .. } => {
                 for player in state.player_index.keys() {
@@ -186,11 +194,21 @@ fn server_update_system(
                     actor: *claimer_id,
                     card_id: deck.take_card(),
                 },
-                ClientClaim::DropCardOnDiscardPile { card_id } => {
-                    ServerMessage::DropCardOnDiscardPile {
+                ClientClaim::DropHeldCardOnDiscardPile { card_id } => {
+                    ServerMessage::DropHeldCardOnDiscardPile {
                         actor: *claimer_id,
                         card_id,
+                        value: deck.get_card(&card_id),
+                        local_transform: Transform::from_xyz(
+                            entropy.random_range(-10.0..10.0),
+                            entropy.random_range(-10.0..10.0),
+                            0.0,
+                        )
+                        .with_rotation(Quat::from_rotation_z(entropy.random_range(-0.4..0.4))),
                     }
+                }
+                ClientClaim::TakeCardFromDiscardPile => {
+                    ServerMessage::TakeCardFromDiscardPile { actor: *claimer_id }
                 }
             };
 
