@@ -1,11 +1,8 @@
 use std::collections::{HashSet, VecDeque};
 
 use bevy::{platform::collections::HashMap, prelude::*};
-use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
 use bevy_renet::renet::ClientId;
-use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::ops::DerefMut;
 
 use crate::{
     assets::{DESIRED_CARD_HEIGHT, DESIRED_CARD_WIDTH},
@@ -89,8 +86,18 @@ pub struct ProcessedMessage(pub ServerMessage);
 
 #[derive(Resource, Default)]
 pub struct MessageBus {
-    pub incoming: VecDeque<IncomingMessage>,
-    pub processed: VecDeque<ProcessedMessage>,
+    incoming: VecDeque<IncomingMessage>,
+    processed: VecDeque<ProcessedMessage>,
+}
+
+impl MessageBus {
+    pub fn speculate(&mut self, msg: ServerMessage) {
+        self.incoming.push_back(IncomingMessage(msg));
+    }
+
+    pub fn drain_processed(&mut self) -> std::collections::vec_deque::Drain<'_, ProcessedMessage> {
+        self.processed.drain(..)
+    }
 }
 
 pub struct CambioPlugin;
@@ -623,6 +630,7 @@ pub fn process_single_event(
                 .insert(Transform::from_xyz(0.0, 0.0, 10.0))
                 .remove::<Pickable>();
         }
+        ServerMessage::FinishedReplayingHistory => {},
     }
 
     // If we're still here then we accepted the message.

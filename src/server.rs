@@ -122,47 +122,42 @@ fn server_update_system(
                 for ProcessedMessage(msg) in processed_history.0.iter() {
                     server.send_message_typed(*client_id, msg.clone());
                 }
+                server.send_message_typed(*client_id, ServerMessage::FinishedReplayingHistory);
 
                 let new_player_id = PlayerId {
                     player_index: player_seq.generate(),
                     client_id: *client_id,
                 };
 
-                bus.incoming
-                    .push_back(IncomingMessage(ServerMessage::PlayerConnected {
-                        player_id: new_player_id,
-                    }));
+                bus.speculate(ServerMessage::PlayerConnected {
+                    player_id: new_player_id,
+                });
 
                 for _ in 0..4 {
                     let slot_id = SlotId(slot_seq.generate());
-                    bus.incoming
-                        .push_back(IncomingMessage(ServerMessage::ReceiveFreshSlot {
-                            actor: new_player_id,
-                            slot_id,
-                        }));
+                    bus.speculate(ServerMessage::ReceiveFreshSlot {
+                        actor: new_player_id,
+                        slot_id,
+                    });
 
-                    bus.incoming
-                        .push_back(IncomingMessage(ServerMessage::ReceiveFreshCard {
-                            actor: new_player_id,
-                            slot_id,
-                            card_id: deck.take_card(),
-                        }));
+                    bus.speculate(ServerMessage::ReceiveFreshCard {
+                        actor: new_player_id,
+                        slot_id,
+                        card_id: deck.take_card(),
+                    });
                 }
 
                 // If this is the first player, start the game
                 if state.player_index.is_empty() {
-                    bus.incoming
-                        .push_back(IncomingMessage(ServerMessage::PlayerAtTurn {
-                            player_id: new_player_id,
-                        }));
+                    bus.speculate(ServerMessage::PlayerAtTurn {
+                        player_id: new_player_id,
+                    });
                 }
             }
             ServerEvent::ClientDisconnected { client_id, .. } => {
                 for player in state.player_index.keys() {
                     if player.client_id == *client_id {
-                        bus.incoming.push_back(IncomingMessage(
-                            ServerMessage::PlayerDisconnected { player_id: *player },
-                        ));
+                        bus.speculate(ServerMessage::PlayerDisconnected { player_id: *player });
                     }
                 }
             }
@@ -221,7 +216,7 @@ fn server_update_system(
                 }
             };
 
-            bus.incoming.push_back(IncomingMessage(server_message));
+            bus.speculate(server_message);
         }
     }
 
@@ -269,7 +264,7 @@ fn broadcast_validated_updates(
     mut processed_history: ResMut<ProcessedHistory>,
     state: Res<CambioState>,
 ) {
-    for ProcessedMessage(msg) in bus.processed.drain(..) {
+    for ProcessedMessage(msg) in bus.drain_processed() {
         processed_history.0.push(ProcessedMessage(msg.clone()));
         for player_id in state.player_index.keys() {
             server.send_message_typed(player_id.client_id, msg.redacted_for(player_id));

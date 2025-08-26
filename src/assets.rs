@@ -23,6 +23,9 @@ pub struct GameAssets {
 
     #[asset(path = "arrow_down.png")]
     pub arrow_down_sprite: Handle<Image>,
+
+    #[asset(path = "card_sweep.ogg")]
+    pub card_sweep: Handle<AudioSource>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Default, States)]

@@ -91,6 +91,10 @@ impl Plugin for ClientPlugin {
 
         app.add_systems(OnEnter(GamePhase::Playing), setup);
         app.add_systems(Update, update_player_idx_text);
+        app.add_systems(
+            Update,
+            on_message_accepted.run_if(in_state(GamePhase::Playing)),
+        );
     }
 }
 
@@ -184,8 +188,7 @@ fn client_sync_players(
                 .unwrap()
                 .0;
 
-        bus.incoming
-            .push_back(IncomingMessage(server_message.clone()));
+        bus.speculate(server_message);
     }
 
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
@@ -370,6 +373,30 @@ fn on_player_turn_removed(
     for child in children.iter_descendants(trigger.target()) {
         if let Ok(icon_entity) = icon.get(child) {
             commands.entity(icon_entity).despawn();
+        }
+    }
+}
+
+fn on_message_accepted(
+    mut commands: Commands,
+    assets: Res<GameAssets>,
+    mut bus: ResMut<MessageBus>,
+    mut catched_up: Local<bool>,
+) {
+    for ProcessedMessage(msg) in bus.drain_processed() {
+        match msg {
+            ServerMessage::FinishedReplayingHistory => {
+                *catched_up = true;
+            }
+            ServerMessage::TakeFreshCardFromDeck { .. } => {
+                if *catched_up {
+                    commands.spawn((
+                        AudioPlayer::new(assets.card_sweep.clone()),
+                        PlaybackSettings::DESPAWN,
+                    ));
+                }
+            }
+            _ => (),
         }
     }
 }

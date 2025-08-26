@@ -22,6 +22,7 @@ pub enum ServerMessage {
     PlayerConnected {
         player_id: PlayerId,
     },
+    FinishedReplayingHistory,
     PlayerDisconnected {
         player_id: PlayerId,
     },
