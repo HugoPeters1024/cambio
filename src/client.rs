@@ -166,13 +166,13 @@ fn update_player_idx_text(
 ) {
     let mut turn_description = "";
     if let Some(player_at_turn) = turn_state.iter().next() {
-        turn_description = match &player_at_turn.0 {
-            TurnState::Start => "Turn start",
-            TurnState::TookDeckCard => "You took a card from the deck",
-            TurnState::TookDiscardedCard => "You took a card from the discard pile",
-            TurnState::SwappedCard => "You swapped a card",
-            TurnState::Finished => "Turn end",
-            TurnState::HasBuff(buff) => match buff {
+        turn_description = match player_at_turn {
+            PlayerAtTurn::Start => "Turn start",
+            PlayerAtTurn::TookDeckCard => "You took a card from the deck",
+            PlayerAtTurn::TookDiscardedCard => "You took a card from the discard pile",
+            PlayerAtTurn::SwappedCard => "You swapped a card",
+            PlayerAtTurn::Finished => "Turn end",
+            PlayerAtTurn::HasBuff(buff) => match buff {
                 TurnBuff::MayLookAtOwnCard => "Buff! You may look at one of your cards",
             },
         }

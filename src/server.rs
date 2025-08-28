@@ -196,7 +196,7 @@ fn server_update_system(
                     let card_id = deck.take_card();
                     ServerMessage::TakeFreshCardFromDeck {
                         actor: *claimer_id,
-                        card_id: deck.take_card(),
+                        card_id,
                         value: Some(deck.get_card(&card_id)),
                     }
                 }
