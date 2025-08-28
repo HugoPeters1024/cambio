@@ -18,9 +18,6 @@ pub struct GameAssets {
     #[asset(path = "card_back.jpg")]
     pub card_back: Handle<Image>,
 
-    #[asset(path = "reveal.png")]
-    pub reveal_sprite: Handle<Image>,
-
     #[asset(path = "arrow_down.png")]
     pub arrow_down_sprite: Handle<Image>,
 

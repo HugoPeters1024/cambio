@@ -34,6 +34,11 @@ impl PlayerId {
 #[derive(Component)]
 pub struct IsHeldBy(pub PlayerId);
 
+/// Marker component that were laid on the discard pile because the top
+/// card matched the rank.
+#[derive(Component)]
+pub struct WasMatchingDiscard;
+
 #[derive(
     Debug, Serialize, Deserialize, Component, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord,
 )]
@@ -53,9 +58,16 @@ pub struct UnrevealKnownCardTimer(Timer);
 #[derive(Component)]
 pub struct MyPlayer;
 
+/// Special out of turn buff for a player
+/// indicating that they may dump a card
+/// to another player.
+#[derive(Component)]
+pub struct MayGiveCardTo(pub PlayerId);
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum TurnBuff {
     MayLookAtOwnCard,
+    MayLookAtOtherPlayersCard,
 }
 
 #[derive(Component, Debug, PartialEq, Eq)]
@@ -195,11 +207,14 @@ pub fn process_messages(world: &mut World) {
 pub fn process_single_event(
     In(IncomingMessage(msg)): In<IncomingMessage>,
     mut state: ResMut<CambioState>,
-    mut players: Query<&mut PlayerState>,
+    mut players: Query<(&PlayerId, &mut PlayerState)>,
     held: Query<(Entity, &IsHeldBy)>,
     taken_from_slot: Query<&TakenFromSlot>,
     card_ids: Query<&CardId>,
+    known_cards: Query<&KnownCard>,
     children: Query<&Children>,
+    matching_discard: Query<&WasMatchingDiscard>,
+    may_give_card_to: Query<&MayGiveCardTo>,
     mut discard_pile: Single<(Entity, &mut DiscardPile)>,
     mut player_at_turn: Query<(Entity, &mut PlayerAtTurn)>,
     mut commands: Commands,
@@ -307,6 +322,17 @@ pub fn process_single_event(
         }};
     }
 
+    macro_rules! slot_owner {
+        ($slot_id: expr) => {{
+            let slot_entity = slot_must_exists!($slot_id);
+            players
+                .iter()
+                .find(|(_, player_state)| player_state.slots.contains(slot_entity))
+                .unwrap()
+                .0
+        }};
+    }
+
     match msg {
         ServerMessage::PlayerConnected { player_id } => {
             println!("Player {} connected.", player_id.player_number());
@@ -344,7 +370,7 @@ pub fn process_single_event(
                 return None;
             };
 
-            let slot_idx = player.slots.len();
+            let slot_idx = player.1.slots.len();
             if slot_idx >= 4 {
                 reject!(
                     "Player {} already has the maximum number of slots",
@@ -367,7 +393,7 @@ pub fn process_single_event(
                 ))
                 .id();
 
-            player.slots.insert(slot_entity);
+            player.1.slots.insert(slot_entity);
             state.slot_index.insert(slot_id, slot_entity);
         }
         ServerMessage::ReceiveFreshCard {
@@ -445,10 +471,19 @@ pub fn process_single_event(
             }
 
             if let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(card_entity) {
-                // This card was picked up for an out of turn claim, it can
-                // only be put back on the slot it was taken from
-                // (i.e. the player reconsidered their action).
-                if *originating_slot != slot_id {
+                let slot_owner = slot_owner!(slot_id);
+                let card_owner = slot_owner!(*originating_slot);
+                if let Ok(MayGiveCardTo(player_to_screw)) = may_give_card_to.get(player_entity)
+                    && slot_owner == player_to_screw
+                    && *card_owner == actor
+                {
+                    // All is well, this player is giving on of their cards to another player
+                    // while having the MayGiveCardTo component.
+                    commands.entity(player_entity).remove::<MayGiveCardTo>();
+                } else if *originating_slot != slot_id {
+                    // This card was picked up for an out of turn claim, it can
+                    // only be put back on the slot it was taken from
+                    // (i.e. the player reconsidered their action).
                     reject!("Cannot put card back on a different slot.");
                 }
             } else {
@@ -459,7 +494,7 @@ pub fn process_single_event(
                 let Ok(player_state) = players.get_mut(player_entity) else {
                     reject!("Player index corrupted");
                 };
-                if !player_state.slots.contains(&slot_entity) {
+                if !player_state.1.slots.contains(&slot_entity) {
                     reject!("Cannot put a card to another player's slot.");
                 }
 
@@ -509,15 +544,26 @@ pub fn process_single_event(
             slot_must_have_card!(slot_id, card_id);
             let mut turn_state = must_have_turn!(actor);
 
-            match *turn_state {
-                PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOwnCard) => {
+            match &*turn_state {
+                PlayerAtTurn::HasBuff(buff) => {
                     let slot_entity = slot_must_exists!(slot_id);
                     let Ok(player_state) = players.get_mut(player_entity) else {
                         reject!("Player index corrupted");
                     };
-                    if !player_state.slots.contains(slot_entity) {
-                        reject!("Cannot reveal a card to another player's slot.");
+
+                    match buff {
+                        TurnBuff::MayLookAtOwnCard => {
+                            if !player_state.1.slots.contains(slot_entity) {
+                                reject!("Cannot reveal another player's card.");
+                            }
+                        }
+                        TurnBuff::MayLookAtOtherPlayersCard => {
+                            if player_state.1.slots.contains(slot_entity) {
+                                reject!("Cannot reveal your own card.");
+                            }
+                        }
                     }
+
                     *turn_state = PlayerAtTurn::Finished;
                 }
                 _ => {
@@ -582,13 +628,37 @@ pub fn process_single_event(
             offset_y,
             rotation,
         } => {
-            let &_player_entity = player_must_exists!(actor);
+            let &player_entity = player_must_exists!(actor);
             let &card_entity = card_must_exists!(card_id);
             player_must_be_holding_card!(actor, card_id);
 
-            if taken_from_slot.contains(card_entity) {
-                // Player is attempting to claim a discard opportunity!
-                //
+            if let Ok(TakenFromSlot(origin_slot_id)) = taken_from_slot.get(card_entity) {
+                let Some(top_card_entity) = discard_pile.1.cards.back() else {
+                    reject!("Discard pile is empty");
+                };
+
+                if matching_discard.contains(*top_card_entity) {
+                    reject!("The top card was already a matching discard by another player");
+                }
+
+                let Ok(top_card) = known_cards.get(*top_card_entity) else {
+                    reject!("How is the discard pile's top card not known?!");
+                };
+
+                if top_card.rank != value.rank {
+                    reject!("Cannot discard a card of a different rank!");
+                }
+
+                let &stolen_from = slot_owner!(*origin_slot_id);
+                if stolen_from != actor {
+                    // This player claimed a match using another player's card!
+                    // They now get to give one of their cards to this player
+                    commands
+                        .entity(player_entity)
+                        .insert(MayGiveCardTo(stolen_from));
+                }
+
+                // Player is has claimed a discard opportunity!
                 // The other players holding such a card were too late and put the card back
                 for (held_card, _) in held.iter().filter(|(_, held_by)| held_by.0 != actor) {
                     if let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(held_card) {
@@ -613,6 +683,9 @@ pub fn process_single_event(
                         // receive a buff they can execute first.
                         if value.rank == Rank::Seven || value.rank == Rank::Eight {
                             *turn_state = PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOwnCard);
+                        } else if value.rank == Rank::Nine || value.rank == Rank::Ten {
+                            *turn_state =
+                                PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOtherPlayersCard);
                         } else {
                             *turn_state = PlayerAtTurn::Finished;
                         }
@@ -720,9 +793,12 @@ pub fn process_single_event(
                 PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOwnCard) => {
                     reject!("Cannot swap a card at this point");
                 }
+                PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOtherPlayersCard) => {
+                    reject!("Cannot swap a card at this point");
+                }
             }
 
-            if !player_state.slots.contains(&slot_entity) {
+            if !player_state.1.slots.contains(&slot_entity) {
                 reject!("Cannot swap a card on another player's slot.");
             }
 

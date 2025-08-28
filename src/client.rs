@@ -162,9 +162,10 @@ fn setup(mut commands: Commands, state: Res<CambioState>, assets: Res<GameAssets
 fn update_player_idx_text(
     me: Single<&PlayerId, With<MyPlayer>>,
     turn_state: Query<&PlayerAtTurn, With<MyPlayer>>,
+    extra: Query<&MayGiveCardTo>,
     mut text: Single<&mut Text, With<PlayerIdxText>>,
 ) {
-    let mut turn_description = "";
+    let mut turn_description = "".to_string();
     if let Some(player_at_turn) = turn_state.iter().next() {
         turn_description = match player_at_turn {
             PlayerAtTurn::Start => "Turn start",
@@ -174,9 +175,19 @@ fn update_player_idx_text(
             PlayerAtTurn::Finished => "Turn end",
             PlayerAtTurn::HasBuff(buff) => match buff {
                 TurnBuff::MayLookAtOwnCard => "Buff! You may look at one of your cards",
+                TurnBuff::MayLookAtOtherPlayersCard => "Buff! You may look at someone else's cards",
             },
         }
+        .to_string()
     };
+
+    if let Some(may_give_card_to) = extra.iter().next() {
+        turn_description = format!(
+            "You may give a card to player {}!",
+            may_give_card_to.0.player_number()
+        );
+    }
+
     text.0 = format!(
         "You are player: {} ({})",
         me.player_number(),

@@ -143,6 +143,8 @@ fn server_update_system(
                     bus.speculate(ServerMessage::ReceiveFreshCard {
                         actor: new_player_id,
                         slot_id,
+                        // TODO: we need to undo this if the server message
+                        // is rejected by process_message
                         card_id: deck.take_card(),
                     });
                 }

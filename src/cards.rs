@@ -53,6 +53,7 @@ impl Plugin for CardPlugin {
             PreUpdate,
             (sync_sprite_with_card).run_if(in_state(GamePhase::Playing)),
         );
+        app.add_observer(on_spawn_card);
         app.add_observer(on_spawn_slot);
     }
 }
@@ -83,11 +84,20 @@ fn sync_sprite_with_card(
     }
 }
 
+fn on_spawn_card(trigger: Trigger<OnAdd, SomeCard>, mut commands: Commands) {
+    // Add a nice outline for constrast
+    commands.entity(trigger.target()).with_child((
+        Sprite::from_color(
+            Color::srgb(0.1, 0.1, 0.1),
+            Vec2::new(DESIRED_CARD_WIDTH + 2.0, DESIRED_CARD_HEIGHT + 2.0),
+        ),
+        Transform::from_translation(Vec3::new(0.0, 0.0, -0.001)),
+    ));
+}
+
 fn on_spawn_slot(trigger: Trigger<OnAdd, CardSlot>, mut commands: Commands) {
-    commands
-        .entity(trigger.target())
-        .insert((Sprite::from_color(
-            Color::srgb(0.0, 0.2, 0.0),
-            Vec2::new(DESIRED_CARD_WIDTH + 4.0, DESIRED_CARD_HEIGHT + 4.0),
-        ),));
+    commands.entity(trigger.target()).insert(Sprite::from_color(
+        Color::srgb(0.0, 0.2, 0.0),
+        Vec2::new(DESIRED_CARD_WIDTH + 4.0, DESIRED_CARD_HEIGHT + 4.0),
+    ));
 }
