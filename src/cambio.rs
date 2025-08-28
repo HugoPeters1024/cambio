@@ -338,6 +338,10 @@ pub fn process_single_event(
 
     match msg {
         ServerMessage::PlayerConnected { player_id } => {
+            if state.player_index.contains_key(&player_id) {
+                reject!("Player {} is already connected.", player_id.player_number());
+            }
+
             println!("Player {} connected.", player_id.player_number());
             let pid = player_id.player_index as usize;
             let x = -200.0 + 200.0 * (pid % 3) as f32;
@@ -500,39 +504,30 @@ pub fn process_single_event(
             } else {
                 let mut turn_state = must_have_turn!(actor);
 
-                match &*turn_state {
-                    PlayerAtTurn::HasBuff(TurnBuff::MaySwapTwoCards {
-                        has_swapped_from_slot: Some(swap_origin),
-                    }) => {
-                        if *swap_origin != slot_id {
-                            reject!(
-                                "You may only drop this card back on the slot it was taken from"
-                            );
+                if let Ok(TakenFromSlot(taken_from_slot)) = taken_from_slot.get(card_entity) {
+                    match &*turn_state {
+                        PlayerAtTurn::HasBuff(TurnBuff::MaySwapTwoCards {
+                            has_swapped_from_slot: Some(swap_origin),
+                        }) => {
+                            if *swap_origin != slot_id {
+                                reject!(
+                                    "You may only drop put this card back on the slot where it was swapped from"
+                                );
+                            }
+                            *turn_state = PlayerAtTurn::Finished;
                         }
-                        *turn_state = PlayerAtTurn::Finished;
+                        _ => {
+                            if *taken_from_slot != slot_id {
+                                reject!(
+                                    "You may only drop this card back on the slot it was taken from"
+                                );
+                            }
+                        }
                     }
-                    PlayerAtTurn::TookDiscardedCard => {
-                        reject!("Cards taken from the discard can only be swapped");
-                    }
-                    PlayerAtTurn::TookDeckCard => {
-                        reject!("Cards taken from the deck can only be swapped");
-                    }
-                    PlayerAtTurn::Start => {
-                        reject!(
-                            "Player is at the start of the turn but already holding a card (but not to claim a discard)"
-                        );
-                    }
-                    PlayerAtTurn::Finished => {
-                        reject!(
-                            "Player is at the end of the turn but still holding a card (but not to claim a discard)"
-                        );
-                    }
-                    PlayerAtTurn::SwappedCard => {
-                        reject!("You may not put a swapped card on a slot");
-                    }
-                    PlayerAtTurn::HasBuff(..) => {
-                        reject!("Cannot be holding a card at this point");
-                    }
+                } else {
+                    reject!(
+                        "You cannot lay down a card on a slot that you didn't pick up from another player"
+                    );
                 }
             }
 
@@ -891,6 +886,96 @@ pub fn process_single_event(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn run_events(input: &[ServerMessage], output: &[ServerMessage]) -> World {
+        let mut world = World::new();
+        world.init_resource::<MessageBus>();
+        world.run_system_cached(setup_game_resource).unwrap();
+        let mut bus = world.resource_mut::<MessageBus>();
+        for msg in input {
+            bus.speculate(msg.clone());
+        }
+        world.run_system_cached(process_messages).unwrap();
+        let mut bus = world.resource_mut::<MessageBus>();
+        assert_eq!(
+            bus.drain_processed().map(|p| p.0).collect::<Vec<_>>(),
+            output
+        );
+        world
+    }
+
     #[test]
-    fn it_works() {}
+    fn test_player_cannot_connect_twice() {
+        let player0 = PlayerId {
+            player_index: 0,
+            client_id: 0,
+        };
+        run_events(
+            &[
+                ServerMessage::PlayerConnected { player_id: player0 },
+                ServerMessage::PlayerConnected { player_id: player0 },
+            ],
+            &[ServerMessage::PlayerConnected { player_id: player0 }],
+        );
+    }
+
+    #[test]
+    fn putting_down_an_eigth_gives_buff() {
+        let player0 = PlayerId {
+            player_index: 0,
+            client_id: 0,
+        };
+
+        let known_card = KnownCard {
+            rank: Rank::Eight,
+            suit: Suit::Hearts,
+        };
+
+        let mut world = run_events(
+            &[
+                ServerMessage::PlayerConnected { player_id: player0 },
+                ServerMessage::PlayerAtTurn { player_id: player0 },
+                ServerMessage::TakeFreshCardFromDeck {
+                    actor: player0,
+                    card_id: CardId(0),
+                    value: Some(known_card),
+                },
+                ServerMessage::DropCardOnDiscardPile {
+                    actor: player0,
+                    card_id: CardId(0),
+                    value: known_card,
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                    rotation: 0.0,
+                },
+            ],
+            &[
+                ServerMessage::PlayerConnected { player_id: player0 },
+                ServerMessage::PlayerAtTurn { player_id: player0 },
+                ServerMessage::TakeFreshCardFromDeck {
+                    actor: player0,
+                    card_id: CardId(0),
+                    value: Some(known_card),
+                },
+                ServerMessage::DropCardOnDiscardPile {
+                    actor: player0,
+                    card_id: CardId(0),
+                    value: known_card,
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                    rotation: 0.0,
+                },
+            ],
+        );
+
+        let state = world.get_resource::<CambioState>().unwrap();
+        let turn_state = world
+            .get_mut::<PlayerAtTurn>(state.player_index[&player0])
+            .unwrap();
+        assert_eq!(
+            *turn_state,
+            PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOwnCard)
+        );
+    }
 }

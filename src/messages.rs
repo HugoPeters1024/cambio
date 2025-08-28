@@ -31,7 +31,7 @@ pub enum ClientClaim {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum ServerMessage {
     PlayerConnected {
         player_id: PlayerId,
