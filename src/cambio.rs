@@ -68,6 +68,9 @@ pub struct MayGiveCardTo(pub PlayerId);
 pub enum TurnBuff {
     MayLookAtOwnCard,
     MayLookAtOtherPlayersCard,
+    MaySwapTwoCards {
+        has_swapped_from_slot: Option<SlotId>,
+    },
 }
 
 #[derive(Component, Debug, PartialEq, Eq)]
@@ -470,9 +473,15 @@ pub fn process_single_event(
                 reject!("Slot already has a card.");
             }
 
-            if let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(card_entity) {
+            if let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(card_entity)
+                && !player_at_turn.contains(player_entity)
+            {
+                // We are specifically doing an out of turn drop with a card that originates from
+                // another player's slot.
                 let slot_owner = slot_owner!(slot_id);
                 let card_owner = slot_owner!(*originating_slot);
+
+                // Case 1: this player may give a card to another player
                 if let Ok(MayGiveCardTo(player_to_screw)) = may_give_card_to.get(player_entity)
                     && slot_owner == player_to_screw
                     && *card_owner == actor
@@ -480,25 +489,28 @@ pub fn process_single_event(
                     // All is well, this player is giving on of their cards to another player
                     // while having the MayGiveCardTo component.
                     commands.entity(player_entity).remove::<MayGiveCardTo>();
-                } else if *originating_slot != slot_id {
+                }
+                // Case 2: the card may be returned to its origin
+                else if *originating_slot != slot_id {
                     // This card was picked up for an out of turn claim, it can
                     // only be put back on the slot it was taken from
                     // (i.e. the player reconsidered their action).
-                    reject!("Cannot put card back on a different slot.");
+                    reject!("Case 2: Cannot put card back on a different slot.");
                 }
             } else {
-                let turn_state = must_have_turn!(actor);
+                let mut turn_state = must_have_turn!(actor);
 
-                // This card was picked up by the actor, it can only be
-                // dropped on their slot if it is part of their turn flow.
-                let Ok(player_state) = players.get_mut(player_entity) else {
-                    reject!("Player index corrupted");
-                };
-                if !player_state.1.slots.contains(&slot_entity) {
-                    reject!("Cannot put a card to another player's slot.");
-                }
-
-                match *turn_state {
+                match &*turn_state {
+                    PlayerAtTurn::HasBuff(TurnBuff::MaySwapTwoCards {
+                        has_swapped_from_slot: Some(swap_origin),
+                    }) => {
+                        if *swap_origin != slot_id {
+                            reject!(
+                                "You may only drop this card back on the slot it was taken from"
+                            );
+                        }
+                        *turn_state = PlayerAtTurn::Finished;
+                    }
                     PlayerAtTurn::TookDiscardedCard => {
                         reject!("Cards taken from the discard can only be swapped");
                     }
@@ -518,7 +530,7 @@ pub fn process_single_event(
                     PlayerAtTurn::SwappedCard => {
                         reject!("You may not put a swapped card on a slot");
                     }
-                    PlayerAtTurn::HasBuff { .. } => {
+                    PlayerAtTurn::HasBuff(..) => {
                         reject!("Cannot be holding a card at this point");
                     }
                 }
@@ -561,6 +573,9 @@ pub fn process_single_event(
                             if player_state.1.slots.contains(slot_entity) {
                                 reject!("Cannot reveal your own card.");
                             }
+                        }
+                        TurnBuff::MaySwapTwoCards { .. } => {
+                            reject!("Cannot reveal a card at this point.");
                         }
                     }
 
@@ -686,6 +701,10 @@ pub fn process_single_event(
                         } else if value.rank == Rank::Nine || value.rank == Rank::Ten {
                             *turn_state =
                                 PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOtherPlayersCard);
+                        } else if value.rank == Rank::Jack || value.rank == Rank::Queen {
+                            *turn_state = PlayerAtTurn::HasBuff(TurnBuff::MaySwapTwoCards {
+                                has_swapped_from_slot: None,
+                            });
                         } else {
                             *turn_state = PlayerAtTurn::Finished;
                         }
@@ -779,8 +798,12 @@ pub fn process_single_event(
 
             let mut turn_state = must_have_turn!(actor);
             match *turn_state {
-                PlayerAtTurn::TookDeckCard => {}
-                PlayerAtTurn::TookDiscardedCard => {}
+                PlayerAtTurn::TookDeckCard | PlayerAtTurn::TookDiscardedCard => {
+                    if !player_state.1.slots.contains(&slot_entity) {
+                        reject!("Cannot swap a card on another player's slot.");
+                    }
+                    *turn_state = PlayerAtTurn::SwappedCard;
+                }
                 PlayerAtTurn::Start => {
                     reject!("Cannot swap a card at the start of a turn.");
                 }
@@ -796,18 +819,32 @@ pub fn process_single_event(
                 PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOtherPlayersCard) => {
                     reject!("Cannot swap a card at this point");
                 }
-            }
+                PlayerAtTurn::HasBuff(TurnBuff::MaySwapTwoCards {
+                    has_swapped_from_slot,
+                }) => {
+                    let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(held_card_entity)
+                    else {
+                        reject!("Can only swap cards taken from a player at this point");
+                    };
 
-            if !player_state.1.slots.contains(&slot_entity) {
-                reject!("Cannot swap a card on another player's slot.");
+                    match has_swapped_from_slot {
+                        Some(_) => {
+                            reject!("Already swapped two cards");
+                        }
+                        None => {
+                            *turn_state = PlayerAtTurn::HasBuff(TurnBuff::MaySwapTwoCards {
+                                has_swapped_from_slot: Some(*originating_slot),
+                            });
+                        }
+                    }
+                }
             }
-
-            *turn_state = PlayerAtTurn::SwappedCard;
 
             commands
                 .entity(held_card_entity)
                 .remove::<IsHeldBy>()
                 .remove::<KnownCard>()
+                .remove::<TakenFromSlot>()
                 .insert(ChildOf(slot_entity))
                 .insert(Transform::from_xyz(0.0, 0.0, 1.0))
                 .insert(Pickable::default());
@@ -817,6 +854,7 @@ pub fn process_single_event(
                 .remove::<ChildOf>()
                 .insert(IsHeldBy(actor))
                 .insert(Transform::from_xyz(0.0, 0.0, 10.0))
+                .insert(TakenFromSlot(slot_id))
                 .remove::<Pickable>();
         }
         ServerMessage::FinishedReplayingHistory => {}

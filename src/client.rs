@@ -176,6 +176,7 @@ fn update_player_idx_text(
             PlayerAtTurn::HasBuff(buff) => match buff {
                 TurnBuff::MayLookAtOwnCard => "Buff! You may look at one of your cards",
                 TurnBuff::MayLookAtOtherPlayersCard => "Buff! You may look at someone else's cards",
+                TurnBuff::MaySwapTwoCards { .. } => "Buff! You may swap two cards",
             },
         }
         .to_string()
