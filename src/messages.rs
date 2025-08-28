@@ -8,7 +8,7 @@ use crate::{
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ClientClaim {
-    PickUpSlotCard { slot_id: SlotId },
+    PickUpSlotCard { slot_id: SlotId, card_id: CardId },
     DropCardOnSlot { card_id: CardId, slot_id: SlotId },
     LookAtCard { card_id: CardId },
     TakeFreshCardFromDeck,
@@ -40,9 +40,13 @@ pub enum ServerMessage {
         card_id: CardId,
         value: Option<KnownCard>,
     },
+    /// Always means that some player picked up this
+    /// card. This action is never taken as part of the
+    /// normal turn flow, but can still happen during a turn.
     PickUpSlotCard {
         actor: PlayerId,
         slot_id: SlotId,
+        card_id: CardId,
     },
     SwapHeldCardWithSlotCard {
         actor: PlayerId,

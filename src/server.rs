@@ -174,9 +174,10 @@ fn server_update_system(
                     .0;
 
             let server_message = match claim {
-                ClientClaim::PickUpSlotCard { slot_id } => ServerMessage::PickUpSlotCard {
+                ClientClaim::PickUpSlotCard { slot_id, card_id } => ServerMessage::PickUpSlotCard {
                     actor: *claimer_id,
                     slot_id,
+                    card_id,
                 },
                 ClientClaim::DropCardOnSlot { card_id, slot_id } => ServerMessage::DropCardOnSlot {
                     actor: *claimer_id,

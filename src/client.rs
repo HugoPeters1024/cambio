@@ -259,7 +259,10 @@ fn click_slot_card(
         if let Ok(ChildOf(parent_entity)) = parents.get(trigger.target()) {
             if let Ok(slot_id) = slot_ids.get(*parent_entity) {
                 if !held.iter().any(|held| held.0 == **me) {
-                    client.send_claim(ClientClaim::PickUpSlotCard { slot_id: *slot_id });
+                    client.send_claim(ClientClaim::PickUpSlotCard {
+                        slot_id: *slot_id,
+                        card_id: *card,
+                    });
                 } else {
                     client.send_claim(ClientClaim::SwapHeldCardWithSlotCard { slot_id: *slot_id });
                 }
@@ -276,13 +279,11 @@ fn click_discard_pile(
     held: Query<(Entity, &IsHeldBy, &CardId)>,
     mut client: ResMut<RenetClient>,
 ) {
-    let Ok(discard_pile_entity) = discard_pile.get(trigger.target()) else {
+    if !discard_pile.contains(trigger.target()) {
         return;
     };
 
-    if let Some((card_entity, held_by, &card_id)) =
-        held.iter().find(|(_, held_by, _)| &held_by.0 == *me)
-    {
+    if let Some((_, _, &card_id)) = held.iter().find(|(_, held_by, _)| &held_by.0 == *me) {
         client.send_claim(ClientClaim::DropHeldCardOnDiscardPile { card_id });
     } else {
         client.send_claim(ClientClaim::TakeCardFromDiscardPile);
@@ -339,10 +340,10 @@ fn on_player_turn_added(
 
     let up_down_tween = Tween::new(
         EaseFunction::QuadraticInOut,
-        Duration::from_secs(1),
+        Duration::from_millis(500),
         TransformPositionLens {
-            start: Vec3::new(0.0, 110.0 * player_id.up_or_down(), 0.0),
-            end: Vec3::new(0.0, (120.0 + 20.0) * player_id.up_or_down(), 0.0),
+            start: Vec3::new(0.0, 100.0 * player_id.up_or_down(), 0.0),
+            end: Vec3::new(0.0, (110.0 + 15.0) * player_id.up_or_down(), 0.0),
         },
     )
     .with_repeat_strategy(RepeatStrategy::MirroredRepeat)
@@ -392,6 +393,23 @@ fn on_message_accepted(
                 if *catched_up {
                     commands.spawn((
                         AudioPlayer::new(assets.card_sweep.clone()),
+                        PlaybackSettings::DESPAWN,
+                    ));
+                }
+            }
+            ServerMessage::SwapHeldCardWithSlotCard { .. } => {
+                if *catched_up {
+                    commands.spawn((
+                        AudioPlayer::new(assets.card_swap.clone()),
+                        PlaybackSettings::DESPAWN,
+                    ));
+                }
+            }
+            ServerMessage::DropCardOnSlot { .. }
+            | ServerMessage::DropHeldCardOnDiscardPile { .. } => {
+                if *catched_up {
+                    commands.spawn((
+                        AudioPlayer::new(assets.card_laydown.clone()),
                         PlaybackSettings::DESPAWN,
                     ));
                 }
