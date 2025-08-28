@@ -8,13 +8,27 @@ use crate::{
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ClientClaim {
-    PickUpSlotCard { slot_id: SlotId, card_id: CardId },
-    DropCardOnSlot { card_id: CardId, slot_id: SlotId },
-    LookAtCard { card_id: CardId },
+    PickUpSlotCard {
+        slot_id: SlotId,
+        card_id: CardId,
+    },
+    DropCardOnSlot {
+        card_id: CardId,
+        slot_id: SlotId,
+    },
+    LookAtCardAtSlot {
+        card_id: CardId,
+        slot_id: SlotId,
+    },
     TakeFreshCardFromDeck,
-    DropHeldCardOnDiscardPile { card_id: CardId },
+    DropCardOnDiscardPile {
+        card_id: CardId,
+    },
     TakeCardFromDiscardPile,
-    SwapHeldCardWithSlotCard { slot_id: SlotId },
+    SwapHeldCardWithSlotCard {
+        slot_id: SlotId,
+        held_card_id: CardId,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -35,9 +49,10 @@ pub enum ServerMessage {
         slot_id: SlotId,
         card_id: CardId,
     },
-    RevealCard {
+    RevealCardAtSlot {
         actor: PlayerId,
         card_id: CardId,
+        slot_id: SlotId,
         value: Option<KnownCard>,
     },
     /// Always means that some player picked up this
@@ -51,6 +66,7 @@ pub enum ServerMessage {
     SwapHeldCardWithSlotCard {
         actor: PlayerId,
         slot_id: SlotId,
+        held_card_id: CardId,
     },
     DropCardOnSlot {
         actor: PlayerId,
@@ -60,15 +76,18 @@ pub enum ServerMessage {
     TakeFreshCardFromDeck {
         actor: PlayerId,
         card_id: CardId,
+        value: Option<KnownCard>,
     },
-    DropHeldCardOnDiscardPile {
+    DropCardOnDiscardPile {
         actor: PlayerId,
         card_id: CardId,
         // not every player knows the value at
         // this point yet, but this action reveals
         // it for everyone.
         value: KnownCard,
-        local_transform: Transform,
+        offset_x: f32,
+        offset_y: f32,
+        rotation: f32,
     },
     TakeCardFromDiscardPile {
         actor: PlayerId,
@@ -81,13 +100,31 @@ pub enum ServerMessage {
 impl ServerMessage {
     pub fn redacted_for(&self, player_id: &PlayerId) -> ServerMessage {
         match self {
-            ServerMessage::RevealCard { actor, card_id, .. } => {
+            ServerMessage::RevealCardAtSlot {
+                actor,
+                card_id,
+                slot_id,
+                ..
+            } => {
                 // Only the actor can see the card
                 if actor == player_id {
                     self.clone()
                 } else {
-                    ServerMessage::RevealCard {
-                        actor: *player_id,
+                    ServerMessage::RevealCardAtSlot {
+                        actor: *actor,
+                        card_id: *card_id,
+                        slot_id: *slot_id,
+                        value: None,
+                    }
+                }
+            }
+            ServerMessage::TakeFreshCardFromDeck { actor, card_id, .. } => {
+                // Only the actor can see the card
+                if actor == player_id {
+                    self.clone()
+                } else {
+                    ServerMessage::TakeFreshCardFromDeck {
+                        actor: *actor,
                         card_id: *card_id,
                         value: None,
                     }

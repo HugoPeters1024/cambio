@@ -135,15 +135,6 @@ fn setup(mut commands: Commands, state: Res<CambioState>, assets: Res<GameAssets
 
     commands.spawn((Text::from("You are player: ..."), PlayerIdxText));
 
-    commands
-        .spawn((
-            Sprite::from_image(assets.reveal_sprite.clone()),
-            Transform::from_xyz(90.0, 0.0, 0.0),
-            Pickable::default(),
-            ChildOf(state.root),
-        ))
-        .observe(click_reveal_button);
-
     let deck_of_cards = commands
         .spawn((
             Transform::from_xyz(-90.0, 0.0, 0.0),
@@ -170,9 +161,27 @@ fn setup(mut commands: Commands, state: Res<CambioState>, assets: Res<GameAssets
 
 fn update_player_idx_text(
     me: Single<&PlayerId, With<MyPlayer>>,
+    turn_state: Query<&PlayerAtTurn, With<MyPlayer>>,
     mut text: Single<&mut Text, With<PlayerIdxText>>,
 ) {
-    text.0 = format!("You are player: {}", me.player_number());
+    let mut turn_description = "";
+    if let Some(player_at_turn) = turn_state.iter().next() {
+        turn_description = match &player_at_turn.0 {
+            TurnState::Start => "Turn start",
+            TurnState::TookDeckCard => "You took a card from the deck",
+            TurnState::TookDiscardedCard => "You took a card from the discard pile",
+            TurnState::SwappedCard => "You swapped a card",
+            TurnState::Finished => "Turn end",
+            TurnState::HasBuff(buff) => match buff {
+                TurnBuff::MayLookAtOwnCard => "Buff! You may look at one of your cards",
+            },
+        }
+    };
+    text.0 = format!(
+        "You are player: {} ({})",
+        me.player_number(),
+        turn_description
+    );
 }
 
 fn client_sync_players(
@@ -250,7 +259,7 @@ fn click_slot_card(
     mut trigger: Trigger<Pointer<Click>>,
     me: Single<&PlayerId, With<MyPlayer>>,
     cards: Query<&CardId>,
-    held: Query<&IsHeldBy>,
+    held: Query<(Entity, &IsHeldBy)>,
     slot_ids: Query<&SlotId>,
     parents: Query<&ChildOf>,
     mut client: ResMut<RenetClient>,
@@ -258,15 +267,35 @@ fn click_slot_card(
     if let Ok(card) = cards.get(trigger.target()) {
         if let Ok(ChildOf(parent_entity)) = parents.get(trigger.target()) {
             if let Ok(slot_id) = slot_ids.get(*parent_entity) {
-                if !held.iter().any(|held| held.0 == **me) {
-                    client.send_claim(ClientClaim::PickUpSlotCard {
-                        slot_id: *slot_id,
-                        card_id: *card,
-                    });
-                } else {
-                    client.send_claim(ClientClaim::SwapHeldCardWithSlotCard { slot_id: *slot_id });
+                match trigger.event().button {
+                    PointerButton::Primary => {
+                        if let Some((held_card, _)) =
+                            held.iter().find(|(_, held_by)| held_by.0 == **me)
+                        {
+                            let held_card_id = *cards.get(held_card).unwrap();
+                            client.send_claim(ClientClaim::SwapHeldCardWithSlotCard {
+                                slot_id: *slot_id,
+                                held_card_id,
+                            });
+                        } else {
+                            client.send_claim(ClientClaim::PickUpSlotCard {
+                                slot_id: *slot_id,
+                                card_id: *card,
+                            });
+                        }
+
+                        trigger.propagate(false);
+                    }
+                    PointerButton::Secondary => {
+                        client.send_claim(ClientClaim::LookAtCardAtSlot {
+                            slot_id: *slot_id,
+                            card_id: *card,
+                        });
+
+                        trigger.propagate(false);
+                    }
+                    _ => {}
                 }
-                trigger.propagate(false);
             }
         }
     }
@@ -284,7 +313,7 @@ fn click_discard_pile(
     };
 
     if let Some((_, _, &card_id)) = held.iter().find(|(_, held_by, _)| &held_by.0 == *me) {
-        client.send_claim(ClientClaim::DropHeldCardOnDiscardPile { card_id });
+        client.send_claim(ClientClaim::DropCardOnDiscardPile { card_id });
     } else {
         client.send_claim(ClientClaim::TakeCardFromDiscardPile);
     };
@@ -311,20 +340,6 @@ fn click_slot(
             });
             trigger.propagate(false);
         }
-    }
-}
-
-fn click_reveal_button(
-    mut trigger: Trigger<Pointer<Click>>,
-    mut client: ResMut<RenetClient>,
-    cards: Query<&CardId>,
-    me: Single<&PlayerId, With<MyPlayer>>,
-    holders: Query<(Entity, &IsHeldBy)>,
-) {
-    if let Some((holding_card, _)) = holders.iter().filter(|h| h.1.0 == **me).next() {
-        let card_id = *cards.get(holding_card).unwrap();
-        client.send_claim(ClientClaim::LookAtCard { card_id });
-        trigger.propagate(false);
     }
 }
 
@@ -405,8 +420,7 @@ fn on_message_accepted(
                     ));
                 }
             }
-            ServerMessage::DropCardOnSlot { .. }
-            | ServerMessage::DropHeldCardOnDiscardPile { .. } => {
+            ServerMessage::DropCardOnSlot { .. } | ServerMessage::DropCardOnDiscardPile { .. } => {
                 if *catched_up {
                     commands.spawn((
                         AudioPlayer::new(assets.card_laydown.clone()),

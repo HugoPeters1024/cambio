@@ -184,37 +184,43 @@ fn server_update_system(
                     card_id,
                     slot_id,
                 },
-                ClientClaim::LookAtCard { card_id } => ServerMessage::RevealCard {
-                    actor: *claimer_id,
-                    card_id,
-                    value: Some(deck.get_card(&card_id)),
-                },
-                ClientClaim::TakeFreshCardFromDeck => ServerMessage::TakeFreshCardFromDeck {
-                    actor: *claimer_id,
-                    card_id: deck.take_card(),
-                },
-                ClientClaim::DropHeldCardOnDiscardPile { card_id } => {
-                    ServerMessage::DropHeldCardOnDiscardPile {
+                ClientClaim::LookAtCardAtSlot { card_id, slot_id } => {
+                    ServerMessage::RevealCardAtSlot {
+                        actor: *claimer_id,
+                        card_id,
+                        slot_id,
+                        value: Some(deck.get_card(&card_id)),
+                    }
+                }
+                ClientClaim::TakeFreshCardFromDeck => {
+                    let card_id = deck.take_card();
+                    ServerMessage::TakeFreshCardFromDeck {
+                        actor: *claimer_id,
+                        card_id: deck.take_card(),
+                        value: Some(deck.get_card(&card_id)),
+                    }
+                }
+                ClientClaim::DropCardOnDiscardPile { card_id } => {
+                    ServerMessage::DropCardOnDiscardPile {
                         actor: *claimer_id,
                         card_id,
                         value: deck.get_card(&card_id),
-                        local_transform: Transform::from_xyz(
-                            entropy.random_range(-10.0..10.0),
-                            entropy.random_range(-10.0..10.0),
-                            0.0,
-                        )
-                        .with_rotation(Quat::from_rotation_z(entropy.random_range(-0.4..0.4))),
+                        offset_x: entropy.random_range(-10.0..10.0),
+                        offset_y: entropy.random_range(-10.0..10.0),
+                        rotation: entropy.random_range(-0.4..0.4),
                     }
                 }
                 ClientClaim::TakeCardFromDiscardPile => {
                     ServerMessage::TakeCardFromDiscardPile { actor: *claimer_id }
                 }
-                ClientClaim::SwapHeldCardWithSlotCard { slot_id } => {
-                    ServerMessage::SwapHeldCardWithSlotCard {
-                        actor: *claimer_id,
-                        slot_id,
-                    }
-                }
+                ClientClaim::SwapHeldCardWithSlotCard {
+                    slot_id,
+                    held_card_id,
+                } => ServerMessage::SwapHeldCardWithSlotCard {
+                    actor: *claimer_id,
+                    slot_id,
+                    held_card_id,
+                },
             };
 
             bus.speculate(server_message);
