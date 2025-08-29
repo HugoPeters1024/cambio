@@ -1,4 +1,8 @@
-use std::{net::UdpSocket, time::SystemTime};
+use std::{
+    collections::{HashMap, VecDeque},
+    net::UdpSocket,
+    time::SystemTime,
+};
 
 use bevy::prelude::*;
 use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
@@ -29,33 +33,37 @@ impl ServerExt for RenetServer {
 #[derive(Default, Resource)]
 struct ProcessedHistory(Vec<ProcessedMessage>);
 
+#[derive(Resource)]
 pub struct CardDeck {
-    seq: Seq<u64>,
-    stack: Vec<KnownCard>,
+    free_cards: VecDeque<CardId>,
+    lookup: HashMap<CardId, KnownCard>,
 }
 
 impl Default for CardDeck {
     fn default() -> Self {
-        let mut stack = Vec::new();
-        for suit in Suit::iter() {
-            for rank in Rank::iter() {
-                stack.push(KnownCard { suit, rank });
-            }
-        }
-        CardDeck {
-            seq: Seq::default(),
-            stack,
-        }
+        let lookup = Suit::iter()
+            .flat_map(|suit| Rank::iter().map(move |rank| KnownCard { suit, rank }))
+            .enumerate()
+            .map(|(i, card)| (CardId(i as u64), card))
+            .collect::<HashMap<_, _>>();
+
+        let free_cards = lookup.keys().cloned().collect();
+
+        CardDeck { lookup, free_cards }
     }
 }
 
 impl CardDeck {
-    fn take_card(&mut self) -> CardId {
-        CardId(self.seq.generate())
+    fn fresh_card_id(&mut self) -> CardId {
+        self.free_cards.pop_front().unwrap()
     }
 
-    fn get_card(&mut self, id: &CardId) -> KnownCard {
-        self.stack[id.0 as usize]
+    fn return_free_card(&mut self, id: CardId) {
+        self.free_cards.push_back(id);
+    }
+
+    fn reveal(&mut self, id: &CardId) -> KnownCard {
+        self.lookup.get(id).unwrap().clone()
     }
 }
 
@@ -69,12 +77,13 @@ impl Plugin for ServerPlugin {
         app.insert_resource(server);
         app.insert_resource(transport);
         app.init_resource::<ProcessedHistory>();
+        app.init_resource::<CardDeck>();
 
         app.add_systems(
             FixedUpdate,
             (
                 server_update_system.before(process_messages),
-                broadcast_validated_updates.after(process_messages),
+                (recover_from_rejected, broadcast_validated_updates).after(process_messages),
             ),
         );
     }
@@ -108,7 +117,7 @@ fn server_update_system(
     mut players: Query<(&PlayerId, &mut PlayerState)>,
     mut player_seq: Local<Seq<u8>>,
     mut slot_seq: Local<Seq<u64>>,
-    mut deck: Local<CardDeck>,
+    mut deck: ResMut<CardDeck>,
     mut bus: ResMut<MessageBus>,
     processed_history: Res<ProcessedHistory>,
     mut entropy: GlobalEntropy<WyRand>,
@@ -118,16 +127,16 @@ fn server_update_system(
             ServerEvent::ClientConnected { client_id } => {
                 println!("Player {} connected.", client_id);
 
-                // Replay all historical events
-                for ProcessedMessage(msg) in processed_history.0.iter() {
-                    server.send_message_typed(*client_id, msg.clone());
-                }
-                server.send_message_typed(*client_id, ServerMessage::FinishedReplayingHistory);
-
                 let new_player_id = PlayerId {
                     player_index: player_seq.generate(),
                     client_id: *client_id,
                 };
+
+                // Replay all historical events
+                for ProcessedMessage(msg) in processed_history.0.iter() {
+                    server.send_message_typed(*client_id, msg.redacted_for(&new_player_id));
+                }
+                server.send_message_typed(*client_id, ServerMessage::FinishedReplayingHistory);
 
                 bus.speculate(ServerMessage::PlayerConnected {
                     player_id: new_player_id,
@@ -143,9 +152,7 @@ fn server_update_system(
                     bus.speculate(ServerMessage::ReceiveFreshCard {
                         actor: new_player_id,
                         slot_id,
-                        // TODO: we need to undo this if the server message
-                        // is rejected by process_message
-                        card_id: deck.take_card(),
+                        card_id: deck.fresh_card_id(),
                     });
                 }
 
@@ -191,22 +198,22 @@ fn server_update_system(
                         actor: *claimer_id,
                         card_id,
                         slot_id,
-                        value: Some(deck.get_card(&card_id)),
+                        value: Some(deck.reveal(&card_id)),
                     }
                 }
                 ClientClaim::TakeFreshCardFromDeck => {
-                    let card_id = deck.take_card();
+                    let card_id = deck.fresh_card_id();
                     ServerMessage::TakeFreshCardFromDeck {
                         actor: *claimer_id,
                         card_id,
-                        value: Some(deck.get_card(&card_id)),
+                        value: Some(deck.reveal(&card_id)),
                     }
                 }
                 ClientClaim::DropCardOnDiscardPile { card_id } => {
                     ServerMessage::DropCardOnDiscardPile {
                         actor: *claimer_id,
                         card_id,
-                        value: deck.get_card(&card_id),
+                        value: deck.reveal(&card_id),
                         offset_x: entropy.random_range(-10.0..10.0),
                         offset_y: entropy.random_range(-10.0..10.0),
                         rotation: entropy.random_range(-0.4..0.4),
@@ -265,6 +272,26 @@ fn server_update_system(
         DefaultChannel::Unreliable,
         bincode::serde::encode_to_vec(mouse_update, bincode::config::standard()).unwrap(),
     );
+}
+
+fn recover_from_rejected(mut bus: ResMut<MessageBus>, mut deck: ResMut<CardDeck>) {
+    for msg in bus.drain_rejected() {
+        match msg {
+            ServerMessage::PlayerConnected { .. } => {}
+            ServerMessage::FinishedReplayingHistory => {}
+            ServerMessage::PlayerDisconnected { .. } => {}
+            ServerMessage::ReceiveFreshSlot { .. } => {}
+            ServerMessage::ReceiveFreshCard { card_id, .. } => deck.return_free_card(card_id),
+            ServerMessage::RevealCardAtSlot { .. } => {}
+            ServerMessage::PickUpSlotCard { .. } => {}
+            ServerMessage::SwapHeldCardWithSlotCard { .. } => {}
+            ServerMessage::DropCardOnSlot { .. } => {}
+            ServerMessage::TakeFreshCardFromDeck { card_id, .. } => deck.return_free_card(card_id),
+            ServerMessage::DropCardOnDiscardPile { .. } => {}
+            ServerMessage::TakeCardFromDiscardPile { .. } => {}
+            ServerMessage::PlayerAtTurn { .. } => {}
+        }
+    }
 }
 
 fn broadcast_validated_updates(

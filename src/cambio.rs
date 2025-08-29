@@ -110,7 +110,7 @@ pub struct CambioState {
     pub player_index: HashMap<PlayerId, Entity>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IncomingMessage(pub ServerMessage);
 
 #[derive(Debug)]
@@ -120,6 +120,7 @@ pub struct ProcessedMessage(pub ServerMessage);
 pub struct MessageBus {
     incoming: VecDeque<IncomingMessage>,
     processed: VecDeque<ProcessedMessage>,
+    rejected: VecDeque<ServerMessage>,
 }
 
 impl MessageBus {
@@ -129,6 +130,10 @@ impl MessageBus {
 
     pub fn drain_processed(&mut self) -> std::collections::vec_deque::Drain<'_, ProcessedMessage> {
         self.processed.drain(..)
+    }
+
+    pub fn drain_rejected(&mut self) -> std::collections::vec_deque::Drain<'_, ServerMessage> {
+        self.rejected.drain(..)
     }
 }
 
@@ -198,15 +203,18 @@ fn setup_game_resource(mut commands: Commands) {
 
 pub fn process_messages(world: &mut World) {
     let mut bus = world.get_resource_mut::<MessageBus>().unwrap();
-    let to_process = std::mem::take(&mut bus.incoming);
+    let mut to_process = std::mem::take(&mut bus.incoming);
 
-    for msg in to_process {
+    for msg in to_process.drain(..) {
         if let Some(processed) = world
-            .run_system_cached_with(process_single_event, msg)
+            .run_system_cached_with(process_single_event, msg.clone())
             .unwrap()
         {
             let mut bus = world.get_resource_mut::<MessageBus>().unwrap();
             bus.processed.push_back(processed);
+        } else {
+            let mut bus = world.get_resource_mut::<MessageBus>().unwrap();
+            bus.rejected.push_back(msg.0);
         }
     }
 }
