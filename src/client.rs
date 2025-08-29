@@ -162,7 +162,7 @@ fn setup(mut commands: Commands, state: Res<CambioState>, assets: Res<GameAssets
 fn update_player_idx_text(
     me: Single<&PlayerId, With<MyPlayer>>,
     turn_state: Query<&PlayerAtTurn, With<MyPlayer>>,
-    extra: Query<&MayGiveCardTo>,
+    extra: Query<&MayGiveCardTo, With<MyPlayer>>,
     mut text: Single<&mut Text, With<PlayerIdxText>>,
 ) {
     let mut turn_description = "".to_string();
@@ -177,6 +177,9 @@ fn update_player_idx_text(
                 TurnBuff::MayLookAtOwnCard => "Buff! You may look at one of your cards",
                 TurnBuff::MayLookAtOtherPlayersCard => "Buff! You may look at someone else's cards",
                 TurnBuff::MaySwapTwoCards { .. } => "Buff! You may swap two cards",
+                TurnBuff::MayLookAtCardAndThenSwap { .. } => {
+                    "Buff! You make look at a card and then swap it with another"
+                }
             },
         }
         .to_string()
