@@ -110,26 +110,15 @@ pub struct CambioState {
     pub player_index: HashMap<PlayerId, Entity>,
 }
 
-#[derive(Debug, Clone)]
-pub struct IncomingMessage(pub ServerMessage);
-
-#[derive(Debug)]
-pub struct ProcessedMessage(pub ServerMessage);
-
 #[derive(Resource, Default)]
-pub struct MessageBus {
-    incoming: VecDeque<IncomingMessage>,
-    processed: VecDeque<ProcessedMessage>,
+pub struct MessageDrain {
+    accepted: VecDeque<ServerMessage>,
     rejected: VecDeque<ServerMessage>,
 }
 
-impl MessageBus {
-    pub fn speculate(&mut self, msg: ServerMessage) {
-        self.incoming.push_back(IncomingMessage(msg));
-    }
-
-    pub fn drain_processed(&mut self) -> std::collections::vec_deque::Drain<'_, ProcessedMessage> {
-        self.processed.drain(..)
+impl MessageDrain {
+    pub fn drain_accepted(&mut self) -> std::collections::vec_deque::Drain<'_, ServerMessage> {
+        self.accepted.drain(..)
     }
 
     pub fn drain_rejected(&mut self) -> std::collections::vec_deque::Drain<'_, ServerMessage> {
@@ -141,12 +130,11 @@ pub struct CambioPlugin;
 
 impl Plugin for CambioPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MessageBus>();
+        app.init_resource::<MessageDrain>();
         app.world_mut()
             .run_system_cached(setup_game_resource)
             .unwrap();
 
-        app.add_systems(PreUpdate, process_messages);
         app.add_systems(Update, handle_unreveal_timer);
     }
 }
@@ -201,26 +189,8 @@ fn setup_game_resource(mut commands: Commands) {
     commands.insert_resource(state);
 }
 
-pub fn process_messages(world: &mut World) {
-    let mut bus = world.get_resource_mut::<MessageBus>().unwrap();
-    let mut to_process = std::mem::take(&mut bus.incoming);
-
-    for msg in to_process.drain(..) {
-        if let Some(processed) = world
-            .run_system_cached_with(process_single_event, msg.clone())
-            .unwrap()
-        {
-            let mut bus = world.get_resource_mut::<MessageBus>().unwrap();
-            bus.processed.push_back(processed);
-        } else {
-            let mut bus = world.get_resource_mut::<MessageBus>().unwrap();
-            bus.rejected.push_back(msg.0);
-        }
-    }
-}
-
 pub fn process_single_event(
-    In(IncomingMessage(msg)): In<IncomingMessage>,
+    In(msg): In<ServerMessage>,
     mut state: ResMut<CambioState>,
     mut players: Query<(&PlayerId, &mut PlayerState)>,
     held: Query<(Entity, &IsHeldBy)>,
@@ -233,14 +203,15 @@ pub fn process_single_event(
     mut discard_pile: Single<(Entity, &mut DiscardPile)>,
     mut player_at_turn: Query<(Entity, &mut PlayerAtTurn)>,
     mut commands: Commands,
-) -> Option<ProcessedMessage> {
+    mut message_drain: ResMut<MessageDrain>,
+) {
     println!("Processing message: {:?}", msg);
 
     macro_rules! reject {
     ($($arg:tt)*) => {
         println!($($arg)*);
         warn!($($arg)*);
-        return None;
+        return;
     };
 }
 
@@ -386,8 +357,7 @@ pub fn process_single_event(
             let player_entity = player_must_exists!(actor);
 
             let Ok(mut player) = players.get_mut(*player_entity) else {
-                error!("Player index corrupted");
-                return None;
+                reject!("Player index corrupted");
             };
 
             let slot_idx = player.1.slots.len();
@@ -948,7 +918,7 @@ pub fn process_single_event(
     }
 
     // If we're still here then we accepted the message.
-    return Some(ProcessedMessage(msg));
+    message_drain.accepted.push_back(msg);
 }
 
 #[cfg(test)]
@@ -1047,7 +1017,7 @@ mod tests {
             let output = self.prefix.iter().chain(output.iter());
 
             let mut world = World::new();
-            world.init_resource::<MessageBus>();
+            world.init_resource::<MessageDrain>();
             world.run_system_cached(setup_game_resource).unwrap();
 
             let (discard_pile_entity, _) = world
@@ -1074,16 +1044,17 @@ mod tests {
                     .expect("Test setup has conflicting card ids");
             }
 
-            let mut bus = world.resource_mut::<MessageBus>();
             for msg in input {
-                bus.speculate(msg.clone());
+                world
+                    .run_system_cached_with(process_single_event, msg.clone())
+                    .unwrap();
             }
-            world.run_system_cached(process_messages).unwrap();
-            let mut bus = world.resource_mut::<MessageBus>();
-            for (i, res) in bus.drain_processed().zip_longest(output).enumerate() {
+
+            let mut drain = world.resource_mut::<MessageDrain>();
+            for (i, res) in drain.drain_accepted().zip_longest(output).enumerate() {
                 match res {
                     itertools::EitherOrBoth::Both(actual, expected) => {
-                        assert_eq!(actual.0, *expected, "index {}: discrepancy", i)
+                        assert_eq!(actual, *expected, "index {}: discrepancy", i)
                     }
                     itertools::EitherOrBoth::Left(extra) => {
                         assert!(false, "index {}: where did this come from: {:?}", i, extra)

@@ -200,7 +200,7 @@ fn update_player_idx_text(
 }
 
 fn client_sync_players(
-    mut bus: ResMut<MessageBus>,
+    mut commands: Commands,
     mut client: ResMut<RenetClient>,
     state: Res<CambioState>,
     mut players: Query<&mut PlayerState>,
@@ -212,7 +212,7 @@ fn client_sync_players(
                 .unwrap()
                 .0;
 
-        bus.speculate(server_message);
+        commands.run_system_cached_with(process_single_event, server_message);
     }
 
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
@@ -411,10 +411,10 @@ fn on_player_turn_removed(
 fn on_message_accepted(
     mut commands: Commands,
     assets: Res<GameAssets>,
-    mut bus: ResMut<MessageBus>,
+    mut drain: ResMut<MessageDrain>,
     mut catched_up: Local<bool>,
 ) {
-    for ProcessedMessage(msg) in bus.drain_processed() {
+    for msg in drain.drain_accepted() {
         match msg {
             ServerMessage::FinishedReplayingHistory => {
                 *catched_up = true;

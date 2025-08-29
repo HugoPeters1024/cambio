@@ -31,7 +31,7 @@ impl ServerExt for RenetServer {
 }
 
 #[derive(Default, Resource)]
-struct ProcessedHistory(Vec<ProcessedMessage>);
+struct AcceptedHistory(Vec<ServerMessage>);
 
 #[derive(Resource)]
 pub struct CardDeck {
@@ -76,15 +76,17 @@ impl Plugin for ServerPlugin {
         let (server, transport) = new_renet_server();
         app.insert_resource(server);
         app.insert_resource(transport);
-        app.init_resource::<ProcessedHistory>();
+        app.init_resource::<AcceptedHistory>();
         app.init_resource::<CardDeck>();
 
         app.add_systems(
             FixedUpdate,
             (
-                server_update_system.before(process_messages),
-                (recover_from_rejected, broadcast_validated_updates).after(process_messages),
-            ),
+                server_update_system,
+                recover_from_rejected,
+                broadcast_validated_updates,
+            )
+                .chain(),
         );
     }
 }
@@ -111,6 +113,7 @@ fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
 }
 
 fn server_update_system(
+    mut commands: Commands,
     mut server_events: EventReader<ServerEvent>,
     mut server: ResMut<RenetServer>,
     state: ResMut<CambioState>,
@@ -118,10 +121,10 @@ fn server_update_system(
     mut player_seq: Local<Seq<u8>>,
     mut slot_seq: Local<Seq<u64>>,
     mut deck: ResMut<CardDeck>,
-    mut bus: ResMut<MessageBus>,
-    processed_history: Res<ProcessedHistory>,
+    accepted_history: Res<AcceptedHistory>,
     mut entropy: GlobalEntropy<WyRand>,
 ) {
+    let mut to_process: Vec<ServerMessage> = Vec::new();
     for event in server_events.read() {
         match event {
             ServerEvent::ClientConnected { client_id } => {
@@ -133,23 +136,23 @@ fn server_update_system(
                 };
 
                 // Replay all historical events
-                for ProcessedMessage(msg) in processed_history.0.iter() {
+                for msg in accepted_history.0.iter() {
                     server.send_message_typed(*client_id, msg.redacted_for(&new_player_id));
                 }
                 server.send_message_typed(*client_id, ServerMessage::FinishedReplayingHistory);
 
-                bus.speculate(ServerMessage::PlayerConnected {
+                to_process.push(ServerMessage::PlayerConnected {
                     player_id: new_player_id,
                 });
 
                 for _ in 0..4 {
                     let slot_id = SlotId(slot_seq.generate());
-                    bus.speculate(ServerMessage::ReceiveFreshSlot {
+                    to_process.push(ServerMessage::ReceiveFreshSlot {
                         actor: new_player_id,
                         slot_id,
                     });
 
-                    bus.speculate(ServerMessage::ReceiveFreshCard {
+                    to_process.push(ServerMessage::ReceiveFreshCard {
                         actor: new_player_id,
                         slot_id,
                         card_id: deck.fresh_card_id(),
@@ -158,7 +161,7 @@ fn server_update_system(
 
                 // If this is the first player, start the game
                 if state.player_index.is_empty() {
-                    bus.speculate(ServerMessage::PlayerAtTurn {
+                    to_process.push(ServerMessage::PlayerAtTurn {
                         player_id: new_player_id,
                     });
                 }
@@ -166,7 +169,7 @@ fn server_update_system(
             ServerEvent::ClientDisconnected { client_id, .. } => {
                 for player in state.player_index.keys() {
                     if player.client_id == *client_id {
-                        bus.speculate(ServerMessage::PlayerDisconnected { player_id: *player });
+                        to_process.push(ServerMessage::PlayerDisconnected { player_id: *player });
                     }
                 }
             }
@@ -232,8 +235,12 @@ fn server_update_system(
                 },
             };
 
-            bus.speculate(server_message);
+            to_process.push(server_message);
         }
+    }
+
+    for msg in to_process.drain(..) {
+        commands.run_system_cached_with(process_single_event, msg);
     }
 
     for (player_id, player_entity) in state.player_index.iter() {
@@ -274,8 +281,8 @@ fn server_update_system(
     );
 }
 
-fn recover_from_rejected(mut bus: ResMut<MessageBus>, mut deck: ResMut<CardDeck>) {
-    for msg in bus.drain_rejected() {
+fn recover_from_rejected(mut drain: ResMut<MessageDrain>, mut deck: ResMut<CardDeck>) {
+    for msg in drain.drain_rejected() {
         match msg {
             ServerMessage::PlayerConnected { .. } => {}
             ServerMessage::FinishedReplayingHistory => {}
@@ -295,13 +302,13 @@ fn recover_from_rejected(mut bus: ResMut<MessageBus>, mut deck: ResMut<CardDeck>
 }
 
 fn broadcast_validated_updates(
-    mut bus: ResMut<MessageBus>,
+    mut bus: ResMut<MessageDrain>,
     mut server: ResMut<RenetServer>,
-    mut processed_history: ResMut<ProcessedHistory>,
+    mut processed_history: ResMut<AcceptedHistory>,
     state: Res<CambioState>,
 ) {
-    for ProcessedMessage(msg) in bus.drain_processed() {
-        processed_history.0.push(ProcessedMessage(msg.clone()));
+    for msg in bus.drain_accepted() {
+        processed_history.0.push(msg.clone());
         for player_id in state.player_index.keys() {
             server.send_message_typed(player_id.client_id, msg.redacted_for(player_id));
         }
