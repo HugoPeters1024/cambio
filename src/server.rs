@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    net::UdpSocket,
-    time::SystemTime,
-};
+use std::{net::UdpSocket, time::SystemTime};
 
 use bevy::prelude::*;
 use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
@@ -33,40 +29,6 @@ impl ServerExt for RenetServer {
 #[derive(Default, Resource)]
 struct AcceptedHistory(Vec<ServerMessage>);
 
-#[derive(Resource)]
-pub struct CardDeck {
-    free_cards: VecDeque<CardId>,
-    lookup: HashMap<CardId, KnownCard>,
-}
-
-impl Default for CardDeck {
-    fn default() -> Self {
-        let lookup = Suit::iter()
-            .flat_map(|suit| Rank::iter().map(move |rank| KnownCard { suit, rank }))
-            .enumerate()
-            .map(|(i, card)| (CardId(i as u64), card))
-            .collect::<HashMap<_, _>>();
-
-        let free_cards = lookup.keys().cloned().collect();
-
-        CardDeck { lookup, free_cards }
-    }
-}
-
-impl CardDeck {
-    fn fresh_card_id(&mut self) -> CardId {
-        self.free_cards.pop_front().unwrap()
-    }
-
-    fn return_free_card(&mut self, id: CardId) {
-        self.free_cards.push_back(id);
-    }
-
-    fn reveal(&mut self, id: &CardId) -> KnownCard {
-        self.lookup.get(id).unwrap().clone()
-    }
-}
-
 pub struct ServerPlugin;
 
 impl Plugin for ServerPlugin {
@@ -77,7 +39,15 @@ impl Plugin for ServerPlugin {
         app.insert_resource(server);
         app.insert_resource(transport);
         app.init_resource::<AcceptedHistory>();
-        app.init_resource::<CardDeck>();
+
+        // Make sure the server is all knowing wrt card lookups
+        app.insert_resource(CardValueLookup(
+            Suit::iter()
+                .flat_map(|suit| Rank::iter().map(move |rank| KnownCard { rank, suit }))
+                .enumerate()
+                .map(|(index, card)| (CardId(index as u64), card))
+                .collect(),
+        ));
 
         app.add_systems(
             FixedUpdate,
@@ -116,11 +86,10 @@ fn server_update_system(
     mut commands: Commands,
     mut server_events: EventReader<ServerEvent>,
     mut server: ResMut<RenetServer>,
-    state: ResMut<CambioState>,
+    state: Res<CambioState>,
     mut players: Query<(&PlayerId, &mut PlayerState)>,
     mut player_seq: Local<Seq<u8>>,
     mut slot_seq: Local<Seq<u64>>,
-    mut deck: ResMut<CardDeck>,
     accepted_history: Res<AcceptedHistory>,
     mut entropy: GlobalEntropy<WyRand>,
 ) {
@@ -145,17 +114,17 @@ fn server_update_system(
                     player_id: new_player_id,
                 });
 
-                for _ in 0..4 {
+                for i in 0..4 {
                     let slot_id = SlotId(slot_seq.generate());
                     to_process.push(ServerMessage::ReceiveFreshSlot {
                         actor: new_player_id,
                         slot_id,
                     });
 
-                    to_process.push(ServerMessage::ReceiveFreshCard {
+                    to_process.push(ServerMessage::ReceiveFreshCardFromDeck {
                         actor: new_player_id,
                         slot_id,
-                        card_id: deck.fresh_card_id(),
+                        card_id: state.free_cards[i],
                     });
                 }
 
@@ -201,22 +170,16 @@ fn server_update_system(
                         actor: *claimer_id,
                         card_id,
                         slot_id,
-                        value: Some(deck.reveal(&card_id)),
                     }
                 }
-                ClientClaim::TakeFreshCardFromDeck => {
-                    let card_id = deck.fresh_card_id();
-                    ServerMessage::TakeFreshCardFromDeck {
-                        actor: *claimer_id,
-                        card_id,
-                        value: Some(deck.reveal(&card_id)),
-                    }
-                }
+                ClientClaim::TakeFreshCardFromDeck => ServerMessage::TakeFreshCardFromDeck {
+                    actor: *claimer_id,
+                    card_id: state.free_cards[0],
+                },
                 ClientClaim::DropCardOnDiscardPile { card_id } => {
                     ServerMessage::DropCardOnDiscardPile {
                         actor: *claimer_id,
                         card_id,
-                        value: deck.reveal(&card_id),
                         offset_x: entropy.random_range(-10.0..10.0),
                         offset_y: entropy.random_range(-10.0..10.0),
                         rotation: entropy.random_range(-0.4..0.4),
@@ -240,7 +203,7 @@ fn server_update_system(
     }
 
     for msg in to_process.drain(..) {
-        commands.run_system_cached_with(process_single_event, msg);
+        commands.run_system_cached_with(process_single_event.pipe(|_: In<bool>| ()), msg);
     }
 
     for (player_id, player_entity) in state.player_index.iter() {
@@ -281,36 +244,44 @@ fn server_update_system(
     );
 }
 
-fn recover_from_rejected(mut drain: ResMut<MessageDrain>, mut deck: ResMut<CardDeck>) {
-    for msg in drain.drain_rejected() {
-        match msg {
-            ServerMessage::PlayerConnected { .. } => {}
-            ServerMessage::FinishedReplayingHistory => {}
-            ServerMessage::PlayerDisconnected { .. } => {}
-            ServerMessage::ReceiveFreshSlot { .. } => {}
-            ServerMessage::ReceiveFreshCard { card_id, .. } => deck.return_free_card(card_id),
-            ServerMessage::RevealCardAtSlot { .. } => {}
-            ServerMessage::PickUpSlotCard { .. } => {}
-            ServerMessage::SwapHeldCardWithSlotCard { .. } => {}
-            ServerMessage::DropCardOnSlot { .. } => {}
-            ServerMessage::TakeFreshCardFromDeck { card_id, .. } => deck.return_free_card(card_id),
-            ServerMessage::DropCardOnDiscardPile { .. } => {}
-            ServerMessage::TakeCardFromDiscardPile { .. } => {}
-            ServerMessage::PlayerAtTurn { .. } => {}
-        }
-    }
+fn recover_from_rejected(mut drain: ResMut<MessageDrain>) {
+    for _ in drain.drain_rejected() {}
 }
 
 fn broadcast_validated_updates(
     mut bus: ResMut<MessageDrain>,
     mut server: ResMut<RenetServer>,
     mut processed_history: ResMut<AcceptedHistory>,
+    card_lookup: Res<CardValueLookup>,
     state: Res<CambioState>,
 ) {
-    for msg in bus.drain_accepted() {
-        processed_history.0.push(msg.clone());
+    let mut send = |msg: ServerMessage| {
         for player_id in state.player_index.keys() {
             server.send_message_typed(player_id.client_id, msg.redacted_for(player_id));
         }
+        processed_history.0.push(msg.clone());
+    };
+
+    for msg in bus.drain_accepted() {
+        // JIT publish the values of cards
+        match msg {
+            ServerMessage::TakeFreshCardFromDeck { actor, card_id }
+            | ServerMessage::RevealCardAtSlot { actor, card_id, .. } => {
+                send(ServerMessage::PublishCardForPlayer {
+                    player_id: actor,
+                    card_id,
+                    value: Some(card_lookup.0.get(&card_id).unwrap().clone()),
+                });
+            }
+            ServerMessage::DropCardOnDiscardPile { card_id, .. } => {
+                send(ServerMessage::PublishCardPublically {
+                    card_id,
+                    value: card_lookup.0.get(&card_id).unwrap().clone(),
+                });
+            }
+            _ => (),
+        }
+
+        send(msg);
     }
 }

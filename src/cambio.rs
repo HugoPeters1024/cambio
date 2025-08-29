@@ -105,6 +105,7 @@ pub struct PlayerState {
 #[derive(Resource)]
 pub struct CambioState {
     pub root: Entity,
+    pub free_cards: VecDeque<CardId>,
     pub card_index: HashMap<CardId, Entity>,
     pub slot_index: HashMap<SlotId, Entity>,
     pub player_index: HashMap<PlayerId, Entity>,
@@ -115,6 +116,9 @@ pub struct MessageDrain {
     accepted: VecDeque<ServerMessage>,
     rejected: VecDeque<ServerMessage>,
 }
+
+#[derive(Resource, Default)]
+pub struct CardValueLookup(pub HashMap<CardId, KnownCard>);
 
 impl MessageDrain {
     pub fn drain_accepted(&mut self) -> std::collections::vec_deque::Drain<'_, ServerMessage> {
@@ -131,6 +135,7 @@ pub struct CambioPlugin;
 impl Plugin for CambioPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MessageDrain>();
+        app.init_resource::<CardValueLookup>();
         app.world_mut()
             .run_system_cached(setup_game_resource)
             .unwrap();
@@ -181,6 +186,7 @@ fn setup_game_resource(mut commands: Commands) {
 
     let state = CambioState {
         root,
+        free_cards: (0..52).map(CardId).collect(),
         card_index: HashMap::new(),
         slot_index: HashMap::new(),
         player_index: HashMap::new(),
@@ -200,20 +206,37 @@ pub fn process_single_event(
     children: Query<&Children>,
     matching_discard: Query<&WasMatchingDiscard>,
     may_give_card_to: Query<&MayGiveCardTo>,
+    mut card_lookup: ResMut<CardValueLookup>,
     mut discard_pile: Single<(Entity, &mut DiscardPile)>,
     mut player_at_turn: Query<(Entity, &mut PlayerAtTurn)>,
     mut commands: Commands,
     mut message_drain: ResMut<MessageDrain>,
-) {
+) -> bool {
     println!("Processing message: {:?}", msg);
 
     macro_rules! reject {
-    ($($arg:tt)*) => {
-        println!($($arg)*);
-        warn!($($arg)*);
-        return;
-    };
-}
+        ($($arg:tt)*) => {
+            println!($($arg)*);
+            warn!($($arg)*);
+            return false;
+        };
+    }
+
+    macro_rules! card_id_must_be_top_of_deck {
+        ($card_id: expr) => {
+            let Some(deck_card) = state.free_cards.pop_front() else {
+                reject!("Deck is empty.");
+            };
+
+            if deck_card != $card_id {
+                reject!(
+                    "Card {} is not top of deck, {} is.",
+                    $card_id.0,
+                    deck_card.0
+                );
+            }
+        };
+    }
 
     macro_rules! player_must_exists {
         ($player_id: expr) => {{
@@ -280,6 +303,15 @@ pub fn process_single_event(
                     $player_id.player_number()
                 );
             }
+        }};
+    }
+
+    macro_rules! card_must_be_known_internally {
+        ($card_id: expr) => {{
+            let Some(known_card) = card_lookup.0.get(&$card_id) else {
+                reject!("Card {} should have known value.", $card_id.0);
+            };
+            known_card
         }};
     }
 
@@ -350,11 +382,14 @@ pub fn process_single_event(
             println!("Player {} disconnected.", player_id.player_number());
 
             let player_entity = *state.player_index.get(&player_id).unwrap();
-            commands.entity(player_entity).despawn_related::<Children>();
+            commands.entity(player_entity).despawn();
             state.player_index.remove(&player_id);
         }
         ServerMessage::ReceiveFreshSlot { actor, slot_id } => {
             let player_entity = player_must_exists!(actor);
+            if state.slot_index.contains_key(&slot_id) {
+                reject!("Slot {} already exists.", slot_id.0);
+            }
 
             let Ok(mut player) = players.get_mut(*player_entity) else {
                 reject!("Player index corrupted");
@@ -386,11 +421,12 @@ pub fn process_single_event(
             player.1.slots.insert(slot_entity);
             state.slot_index.insert(slot_id, slot_entity);
         }
-        ServerMessage::ReceiveFreshCard {
-            actor: _,
-            slot_id,
+        ServerMessage::ReceiveFreshCardFromDeck {
+            actor,
             card_id,
+            slot_id,
         } => {
+            let _ = player_must_exists!(actor);
             let &slot_entity = slot_must_exists!(slot_id);
 
             if children
@@ -400,6 +436,7 @@ pub fn process_single_event(
                 reject!("Slot already has a card.");
             }
 
+            card_id_must_be_top_of_deck!(card_id);
             let card_entity = commands
                 .spawn((
                     SomeCard,
@@ -461,28 +498,42 @@ pub fn process_single_event(
             }
 
             if let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(card_entity)
-                && !player_at_turn.contains(player_entity)
+                && let Ok(MayGiveCardTo(player_to_screw)) = may_give_card_to.get(player_entity)
             {
-                // We are specifically doing an out of turn drop with a card that originates from
-                // another player's slot.
                 let slot_owner = slot_owner!(slot_id);
                 let card_owner = slot_owner!(*originating_slot);
 
-                // Case 1: this player may give a card to another player
-                if let Ok(MayGiveCardTo(player_to_screw)) = may_give_card_to.get(player_entity)
-                    && slot_owner == player_to_screw
-                    && *card_owner == actor
-                {
-                    // All is well, this player is giving one of their cards to another player
-                    // while having the MayGiveCardTo component, but now we have to remove it.
+                // Putting it back where it game from is always valid
+                if *originating_slot != slot_id {
+                    // But if it is somewhere else then...
+
+                    // 1. It must be on a slot of the player we are screwing
+                    if slot_owner != player_to_screw {
+                        reject!(
+                            "You can only give a card to player {} right now.",
+                            player_to_screw.player_number()
+                        );
+                    }
+
+                    // 2. The card must be ours
+                    if *card_owner != actor {
+                        reject!(
+                            "You can only give one of your cards to player {} right now.",
+                            player_to_screw.player_number()
+                        );
+                    }
+
+                    // 3. Then we can complete the action
                     commands.entity(player_entity).remove::<MayGiveCardTo>();
                 }
-                // Case 2: the card may be returned to its origin
-                else if *originating_slot != slot_id {
-                    // This card was picked up for an out of turn claim, it can
-                    // only be put back on the slot it was taken from
-                    // (i.e. the player reconsidered their action).
-                    reject!("Case 2: Cannot put card back on a different slot.");
+            } else if let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(card_entity)
+                && !player_at_turn.contains(player_entity)
+            {
+                // We are specifically doing an out of turn drop with a card that originates from
+                // another player's slot. The only way to drop this card on a slot is by returning
+                // it to the origin.
+                if *originating_slot != slot_id {
+                    reject!("Cannot put card back on a different slot.");
                 }
             } else {
                 let mut turn_state = must_have_turn!(actor);
@@ -531,7 +582,6 @@ pub fn process_single_event(
             actor,
             card_id,
             slot_id,
-            value: known_card,
         } => {
             let &player_entity = player_must_exists!(actor);
             let &card_entity = card_must_exists!(card_id);
@@ -578,21 +628,17 @@ pub fn process_single_event(
                 }
             }
 
-            if let Some(known_card) = known_card {
+            if let Some(known_card) = card_lookup.0.get(&card_id) {
                 commands
                     .entity(card_entity)
-                    .insert(known_card)
+                    .insert(*known_card)
                     .insert(UnrevealKnownCardTimer(Timer::from_seconds(
                         3.0,
                         TimerMode::Once,
                     )));
             }
         }
-        ServerMessage::TakeFreshCardFromDeck {
-            actor,
-            card_id,
-            value,
-        } => {
+        ServerMessage::TakeFreshCardFromDeck { actor, card_id } => {
             let _player_entity = player_must_exists!(actor);
             let mut turn_state = must_have_turn!(actor);
 
@@ -611,6 +657,8 @@ pub fn process_single_event(
             }
 
             *turn_state = PlayerAtTurn::TookDeckCard;
+
+            card_id_must_be_top_of_deck!(card_id);
             let card_entity = commands
                 .spawn((
                     SomeCard,
@@ -621,8 +669,10 @@ pub fn process_single_event(
                 ))
                 .id();
 
-            if let Some(value) = value {
-                commands.entity(card_entity).insert(value);
+            // We assume that the server will JIT publish the card for the
+            // right player before sending this message.
+            if let Some(known_card) = card_lookup.0.get(&card_id) {
+                commands.entity(card_entity).insert(*known_card);
             }
 
             state.card_index.insert(card_id, card_entity);
@@ -630,7 +680,6 @@ pub fn process_single_event(
         ServerMessage::DropCardOnDiscardPile {
             actor,
             card_id,
-            value,
             offset_x,
             offset_y,
             rotation,
@@ -638,6 +687,7 @@ pub fn process_single_event(
             let &player_entity = player_must_exists!(actor);
             let &card_entity = card_must_exists!(card_id);
             player_must_be_holding_card!(actor, card_id);
+            let known_value = card_must_be_known_internally!(card_id);
 
             if let Ok(TakenFromSlot(origin_slot_id)) = taken_from_slot.get(card_entity) {
                 let Some(top_card_entity) = discard_pile.1.cards.back() else {
@@ -652,7 +702,7 @@ pub fn process_single_event(
                     reject!("How is the discard pile's top card not known?!");
                 };
 
-                if top_card.rank != value.rank {
+                if top_card.rank != known_value.rank {
                     reject!("Cannot discard a card of a different rank!");
                 }
 
@@ -688,16 +738,17 @@ pub fn process_single_event(
                     PlayerAtTurn::TookDeckCard => {
                         // Depending on the deck card that was discarded, players might
                         // receive a buff they can execute first.
-                        if value.rank == Rank::Seven || value.rank == Rank::Eight {
+                        if known_value.rank == Rank::Seven || known_value.rank == Rank::Eight {
                             *turn_state = PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOwnCard);
-                        } else if value.rank == Rank::Nine || value.rank == Rank::Ten {
+                        } else if known_value.rank == Rank::Nine || known_value.rank == Rank::Ten {
                             *turn_state =
                                 PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOtherPlayersCard);
-                        } else if value.rank == Rank::Jack || value.rank == Rank::Queen {
+                        } else if known_value.rank == Rank::Jack || known_value.rank == Rank::Queen
+                        {
                             *turn_state = PlayerAtTurn::HasBuff(TurnBuff::MaySwapTwoCards {
                                 has_swapped_from_slot: None,
                             });
-                        } else if value.rank == Rank::King {
+                        } else if known_value.rank == Rank::King {
                             *turn_state =
                                 PlayerAtTurn::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
                                     has_looked_at: None,
@@ -731,7 +782,7 @@ pub fn process_single_event(
                 .entity(card_entity)
                 .remove::<IsHeldBy>()
                 .remove::<TakenFromSlot>()
-                .insert(value)
+                .insert(*known_value)
                 .insert(ChildOf(discard_pile.0))
                 .insert(transform);
 
@@ -890,6 +941,14 @@ pub fn process_single_event(
             }
         }
         ServerMessage::FinishedReplayingHistory => {}
+        ServerMessage::PublishCardPublically { card_id, value } => {
+            card_lookup.0.insert(card_id, value);
+        }
+        ServerMessage::PublishCardForPlayer { card_id, value, .. } => {
+            if let Some(value) = value {
+                card_lookup.0.insert(card_id, value);
+            }
+        }
     }
 
     // If we're still here then we accepted the message.
@@ -919,11 +978,12 @@ pub fn process_single_event(
 
     // If we're still here then we accepted the message.
     message_drain.accepted.push_back(msg);
+    true
 }
 
 #[cfg(test)]
 mod tests {
-    use itertools::Itertools;
+    use strum::IntoEnumIterator;
 
     use super::*;
 
@@ -941,175 +1001,178 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
     struct TestSetup {
-        prefix: Vec<ServerMessage>,
-        cards_in_discard_pile: Vec<(CardId, KnownCard)>,
+        world: World,
     }
 
     impl TestSetup {
-        fn empty() -> TestSetup {
-            TestSetup {
-                prefix: Vec::new(),
-                cards_in_discard_pile: Vec::new(),
-            }
-        }
-
-        fn one_player_one_card_start_of_turn() -> TestSetup {
-            TestSetup {
-                prefix: vec![
-                    ServerMessage::PlayerConnected {
-                        player_id: player0(),
-                    },
-                    ServerMessage::ReceiveFreshSlot {
-                        actor: player0(),
-                        slot_id: SlotId(0),
-                    },
-                    ServerMessage::ReceiveFreshCard {
-                        actor: player0(),
-                        slot_id: SlotId(0),
-                        card_id: CardId(0),
-                    },
-                    ServerMessage::PlayerAtTurn {
-                        player_id: player0(),
-                    },
-                ],
-                cards_in_discard_pile: Vec::new(),
-            }
-        }
-
-        fn two_players_one_cards() -> TestSetup {
-            TestSetup {
-                prefix: vec![
-                    ServerMessage::PlayerConnected {
-                        player_id: player0(),
-                    },
-                    ServerMessage::PlayerConnected {
-                        player_id: player1(),
-                    },
-                    ServerMessage::ReceiveFreshSlot {
-                        actor: player0(),
-                        slot_id: SlotId(0),
-                    },
-                    ServerMessage::ReceiveFreshCard {
-                        actor: player0(),
-                        slot_id: SlotId(0),
-                        card_id: CardId(0),
-                    },
-                    ServerMessage::ReceiveFreshSlot {
-                        actor: player1(),
-                        slot_id: SlotId(1),
-                    },
-                    ServerMessage::ReceiveFreshCard {
-                        actor: player1(),
-                        slot_id: SlotId(1),
-                        card_id: CardId(1),
-                    },
-                    ServerMessage::PlayerAtTurn {
-                        player_id: player0(),
-                    },
-                ],
-                cards_in_discard_pile: vec![],
-            }
-        }
-
-        fn run_events_cmp(&self, input: &[ServerMessage], output: &[ServerMessage]) -> World {
-            let input = self.prefix.iter().chain(input.iter());
-            let output = self.prefix.iter().chain(output.iter());
-
+        fn new() -> TestSetup {
             let mut world = World::new();
+
+            world.init_resource::<CardValueLookup>();
             world.init_resource::<MessageDrain>();
             world.run_system_cached(setup_game_resource).unwrap();
 
-            let (discard_pile_entity, _) = world
-                .query::<(Entity, &DiscardPile)>()
-                .single(&mut world)
-                .unwrap();
-
-            for (card_id, known_card) in self.cards_in_discard_pile.iter() {
-                let card_entity = world
-                    .spawn((*card_id, *known_card, ChildOf(discard_pile_entity)))
-                    .id();
-
-                world
-                    .query::<&mut DiscardPile>()
-                    .single_mut(&mut world)
-                    .unwrap()
-                    .cards
-                    .push_back(card_entity);
-
-                world
-                    .resource_mut::<CambioState>()
-                    .card_index
-                    .try_insert(*card_id, card_entity)
-                    .expect("Test setup has conflicting card ids");
-            }
-
-            for msg in input {
-                world
-                    .run_system_cached_with(process_single_event, msg.clone())
-                    .unwrap();
-            }
-
-            let mut drain = world.resource_mut::<MessageDrain>();
-            for (i, res) in drain.drain_accepted().zip_longest(output).enumerate() {
-                match res {
-                    itertools::EitherOrBoth::Both(actual, expected) => {
-                        assert_eq!(actual, *expected, "index {}: discrepancy", i)
-                    }
-                    itertools::EitherOrBoth::Left(extra) => {
-                        assert!(false, "index {}: where did this come from: {:?}", i, extra)
-                    }
-                    itertools::EitherOrBoth::Right(rejected) => {
-                        assert!(false, "index {}: rejected: {:?}", i, rejected)
-                    }
-                }
-            }
-
-            world
+            TestSetup { world }
         }
 
-        fn run_events(&self, input: &[ServerMessage]) -> World {
-            self.run_events_cmp(input, input)
+        fn with_card_on_discard_pile(mut self, card_id: CardId, value: KnownCard) -> TestSetup {
+            let discard_pile_entity = self
+                .world
+                .query::<(Entity, &mut DiscardPile)>()
+                .single(&self.world)
+                .unwrap()
+                .0;
+            let card_entity = self
+                .world
+                .spawn((SomeCard, card_id, ChildOf(discard_pile_entity)))
+                .id();
+
+            self.world
+                .query::<(Entity, &mut DiscardPile)>()
+                .single_mut(&mut self.world)
+                .unwrap()
+                .1
+                .cards
+                .push_back(card_entity);
+            self.world
+                .get_resource_mut::<CambioState>()
+                .unwrap()
+                .card_index
+                .insert(card_id, card_entity);
+
+            self.accepts(&ServerMessage::PublishCardPublically { card_id, value });
+
+            self
+        }
+
+        fn with_events(mut self, events: &[ServerMessage]) -> TestSetup {
+            for event in events {
+                assert!(self.run_event_inplace(event));
+            }
+            self
+        }
+
+        fn with_event(self, event: ServerMessage) -> TestSetup {
+            self.with_events(&[event])
+        }
+
+        fn accepts(&mut self, event: &ServerMessage) {
+            assert!(
+                self.run_event_inplace(event),
+                "Unexpectedly rejected event: {:?}",
+                event
+            );
+        }
+
+        fn rejects(&mut self, event: &ServerMessage) {
+            assert!(
+                !self.run_event_inplace(event),
+                "Unexpectedly accepted event: {:?}",
+                event
+            );
+        }
+
+        fn run_event_inplace(&mut self, event: &ServerMessage) -> bool {
+            self.world
+                .run_system_cached_with(process_single_event, event.clone())
+                .unwrap()
+        }
+
+        fn with_all_cards_known(mut self) -> TestSetup {
+            for (card_id, card) in Rank::iter()
+                .flat_map(|rank| Suit::iter().map(move |suit| KnownCard { rank, suit }))
+                .enumerate()
+                .map(|(index, card)| (CardId(index as u64), card))
+            {
+                self.run_event_inplace(&ServerMessage::PublishCardPublically {
+                    card_id,
+                    value: card,
+                });
+            }
+            self
+        }
+
+        fn one_player_one_card_start_of_turn() -> TestSetup {
+            TestSetup::new().with_events(&[
+                ServerMessage::PlayerConnected {
+                    player_id: player0(),
+                },
+                ServerMessage::ReceiveFreshSlot {
+                    actor: player0(),
+                    slot_id: SlotId(0),
+                },
+                ServerMessage::ReceiveFreshCardFromDeck {
+                    actor: player0(),
+                    slot_id: SlotId(0),
+                    card_id: CardId(0),
+                },
+                ServerMessage::PlayerAtTurn {
+                    player_id: player0(),
+                },
+            ])
+        }
+
+        fn two_players_one_cards() -> TestSetup {
+            Self::one_player_one_card_start_of_turn().with_events(&[
+                ServerMessage::PlayerConnected {
+                    player_id: player1(),
+                },
+                ServerMessage::ReceiveFreshSlot {
+                    actor: player1(),
+                    slot_id: SlotId(1),
+                },
+                ServerMessage::ReceiveFreshCardFromDeck {
+                    actor: player1(),
+                    slot_id: SlotId(1),
+                    card_id: CardId(1),
+                },
+            ])
+        }
+
+        fn get_world(self) -> World {
+            self.world
         }
     }
 
     #[test]
     fn test_player_cannot_connect_twice() {
-        TestSetup::empty().run_events_cmp(
-            &[
-                ServerMessage::PlayerConnected {
-                    player_id: player0(),
-                },
-                ServerMessage::PlayerConnected {
-                    player_id: player0(),
-                },
-            ],
-            &[ServerMessage::PlayerConnected {
-                player_id: player0(),
-            }],
-        );
+        let mut env = TestSetup::new().with_event(ServerMessage::PlayerConnected {
+            player_id: player0(),
+        });
+
+        env.rejects(&ServerMessage::PlayerConnected {
+            player_id: player0(),
+        });
     }
 
     #[rstest::rstest]
-    fn putting_down_an_sevent_or_eight_gives_buff(
+    fn putting_down_an_seven_or_eight_gives_buff(
         #[values(KnownCard { rank: Rank::Seven, suit: Suit::Hearts }, KnownCard { rank: Rank::Eight, suit: Suit::Hearts })]
         known_card: KnownCard,
     ) {
-        let world = TestSetup::one_player_one_card_start_of_turn().run_events(&[
-            ServerMessage::TakeFreshCardFromDeck {
-                actor: player0(),
-                card_id: CardId(0),
-                value: Some(known_card),
-            },
-            ServerMessage::DropCardOnDiscardPile {
-                actor: player0(),
-                card_id: CardId(0),
-                value: known_card,
-                offset_x: 0.0,
-                offset_y: 0.0,
-                rotation: 0.0,
-            },
-        ]);
+        let world = TestSetup::one_player_one_card_start_of_turn()
+            .with_all_cards_known()
+            .with_events(&[
+                ServerMessage::PublishCardForPlayer {
+                    player_id: player0(),
+                    card_id: CardId(1),
+                    value: Some(known_card),
+                },
+                ServerMessage::TakeFreshCardFromDeck {
+                    actor: player0(),
+                    card_id: CardId(1),
+                },
+                ServerMessage::DropCardOnDiscardPile {
+                    actor: player0(),
+                    card_id: CardId(1),
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                    rotation: 0.0,
+                },
+            ])
+            .get_world();
 
         let state = world.get_resource::<CambioState>().unwrap();
         let turn_state = world
@@ -1123,29 +1186,27 @@ mod tests {
 
     #[test]
     fn take_from_deck_and_swap_flow() {
-        let world = TestSetup::one_player_one_card_start_of_turn().run_events(&[
-            ServerMessage::TakeFreshCardFromDeck {
-                actor: player0(),
-                card_id: CardId(4),
-                value: None,
-            },
-            ServerMessage::SwapHeldCardWithSlotCard {
-                actor: player0(),
-                held_card_id: CardId(4),
-                slot_id: SlotId(0),
-            },
-            ServerMessage::DropCardOnDiscardPile {
-                actor: player0(),
-                card_id: CardId(0),
-                value: KnownCard {
-                    rank: Rank::Eight,
-                    suit: Suit::Hearts,
+        let world = TestSetup::one_player_one_card_start_of_turn()
+            .with_all_cards_known()
+            .with_events(&[
+                ServerMessage::TakeFreshCardFromDeck {
+                    actor: player0(),
+                    card_id: CardId(1),
                 },
-                offset_x: 0.0,
-                offset_y: 0.0,
-                rotation: 0.0,
-            },
-        ]);
+                ServerMessage::SwapHeldCardWithSlotCard {
+                    actor: player0(),
+                    held_card_id: CardId(1),
+                    slot_id: SlotId(0),
+                },
+                ServerMessage::DropCardOnDiscardPile {
+                    actor: player0(),
+                    card_id: CardId(0),
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                    rotation: 0.0,
+                },
+            ])
+            .get_world();
 
         let state = world.get_resource::<CambioState>().unwrap();
         let turn_state = world
@@ -1157,41 +1218,79 @@ mod tests {
 
     #[test]
     fn take_from_discard_pile_and_swap_flow() {
-        let world = TestSetup {
-            cards_in_discard_pile: vec![(
-                CardId(4),
+        TestSetup::one_player_one_card_start_of_turn()
+            .with_card_on_discard_pile(
+                CardId(5),
                 KnownCard {
-                    rank: Rank::Eight,
+                    rank: Rank::Ace,
                     suit: Suit::Hearts,
                 },
-            )],
-            ..TestSetup::one_player_one_card_start_of_turn()
-        }
-        .run_events(&[
-            ServerMessage::TakeCardFromDiscardPile { actor: player0() },
-            ServerMessage::SwapHeldCardWithSlotCard {
+            )
+            .with_events(&[
+                ServerMessage::TakeCardFromDiscardPile { actor: player0() },
+                ServerMessage::SwapHeldCardWithSlotCard {
+                    actor: player0(),
+                    held_card_id: CardId(5),
+                    slot_id: SlotId(0),
+                },
+                ServerMessage::PublishCardPublically {
+                    card_id: CardId(0),
+                    value: KnownCard {
+                        rank: Rank::King,
+                        suit: Suit::Hearts,
+                    },
+                },
+                ServerMessage::DropCardOnDiscardPile {
+                    actor: player0(),
+                    card_id: CardId(0),
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                    rotation: 0.0,
+                },
+            ]);
+    }
+
+    #[test]
+    fn taking_card_from_deck_must_match_state() {
+        TestSetup::one_player_one_card_start_of_turn()
+            .with_all_cards_known()
+            .rejects(&ServerMessage::TakeFreshCardFromDeck {
                 actor: player0(),
-                held_card_id: CardId(4),
-                slot_id: SlotId(0),
-            },
-            ServerMessage::DropCardOnDiscardPile {
-                actor: player0(),
-                card_id: CardId(0),
+                card_id: CardId(30),
+            });
+    }
+
+    #[test]
+    fn taking_cards_from_deck_will_exhaust_deck() {
+        let mut env = TestSetup::one_player_one_card_start_of_turn().with_all_cards_known();
+
+        for i in 1..51 {
+            // We don't want to run into any buffs
+            env.accepts(&ServerMessage::PublishCardPublically {
+                card_id: CardId(i),
                 value: KnownCard {
-                    rank: Rank::Eight,
+                    rank: Rank::Ace,
                     suit: Suit::Hearts,
                 },
+            });
+
+            env.accepts(&ServerMessage::TakeFreshCardFromDeck {
+                actor: player0(),
+                card_id: CardId(i),
+            });
+
+            env.accepts(&ServerMessage::DropCardOnDiscardPile {
+                actor: player0(),
+                card_id: CardId(i),
                 offset_x: 0.0,
                 offset_y: 0.0,
                 rotation: 0.0,
-            },
-        ]);
+            });
+        }
 
-        let state = world.get_resource::<CambioState>().unwrap();
-        let turn_state = world
-            .get::<PlayerAtTurn>(state.player_index[&player0()])
-            .unwrap();
-
-        assert_eq!(*turn_state, PlayerAtTurn::Start);
+        env.rejects(&ServerMessage::TakeFreshCardFromDeck {
+            actor: player0(),
+            card_id: CardId(52),
+        });
     }
 }

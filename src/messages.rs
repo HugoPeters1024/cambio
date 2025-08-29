@@ -2,8 +2,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cambio::{CardId, PlayerId, SlotId},
-    cards::KnownCard,
+    cambio::{CardId, PlayerId, SlotId}, cards::KnownCard,
 };
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -44,7 +43,7 @@ pub enum ServerMessage {
         actor: PlayerId,
         slot_id: SlotId,
     },
-    ReceiveFreshCard {
+    ReceiveFreshCardFromDeck {
         actor: PlayerId,
         slot_id: SlotId,
         card_id: CardId,
@@ -53,7 +52,6 @@ pub enum ServerMessage {
         actor: PlayerId,
         card_id: CardId,
         slot_id: SlotId,
-        value: Option<KnownCard>,
     },
     /// Always means that some player picked up this
     /// card. This action is never taken as part of the
@@ -76,15 +74,10 @@ pub enum ServerMessage {
     TakeFreshCardFromDeck {
         actor: PlayerId,
         card_id: CardId,
-        value: Option<KnownCard>,
     },
     DropCardOnDiscardPile {
         actor: PlayerId,
         card_id: CardId,
-        // not every player knows the value at
-        // this point yet, but this action reveals
-        // it for everyone.
-        value: KnownCard,
         offset_x: f32,
         offset_y: f32,
         rotation: f32,
@@ -95,39 +88,25 @@ pub enum ServerMessage {
     PlayerAtTurn {
         player_id: PlayerId,
     },
+    PublishCardPublically {
+        card_id: CardId,
+        value: KnownCard,
+    },
+    PublishCardForPlayer {
+        player_id: PlayerId,
+        card_id: CardId,
+        value: Option<KnownCard>,
+    },
 }
 
 impl ServerMessage {
-    pub fn redacted_for(&self, player_id: &PlayerId) -> ServerMessage {
+    pub fn redacted_for(&self, redacted_for: &PlayerId) -> ServerMessage {
         match self {
-            ServerMessage::RevealCardAtSlot {
-                actor,
-                card_id,
-                slot_id,
-                ..
-            } => {
-                // Only the actor can see the card
-                if actor == player_id {
-                    self.clone()
+            ServerMessage::PublishCardForPlayer { player_id, card_id, .. } => {
+                if redacted_for != player_id {
+                    ServerMessage::PublishCardForPlayer { value: None, player_id: player_id.clone(), card_id: card_id.clone() }
                 } else {
-                    ServerMessage::RevealCardAtSlot {
-                        actor: *actor,
-                        card_id: *card_id,
-                        slot_id: *slot_id,
-                        value: None,
-                    }
-                }
-            }
-            ServerMessage::TakeFreshCardFromDeck { actor, card_id, .. } => {
-                // Only the actor can see the card
-                if actor == player_id {
                     self.clone()
-                } else {
-                    ServerMessage::TakeFreshCardFromDeck {
-                        actor: *actor,
-                        card_id: *card_id,
-                        value: None,
-                    }
                 }
             }
             _ => self.clone(),

@@ -212,7 +212,8 @@ fn client_sync_players(
                 .unwrap()
                 .0;
 
-        commands.run_system_cached_with(process_single_event, server_message);
+        commands
+            .run_system_cached_with(process_single_event.pipe(|_: In<bool>| ()), server_message);
     }
 
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
