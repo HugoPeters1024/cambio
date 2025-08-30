@@ -1,8 +1,43 @@
 [package]
 name = "cambio"
 version = "0.1.0"
+publish = false
+authors = ["Hugo Peters <git@hugopeters.me>"]
 edition = "2024"
+exclude = ["dist", "build", "assets", "credits"]
 
+[workspace]
+members = ["mobile"]
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev]
+opt-level = 1
+
+# This is used by trunk as it doesn't support custom profiles: https://github.com/trunk-rs/trunk/issues/605
+# xbuild also uses this profile for building android AABs because I couldn't find a configuration for it
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+
+# Profile for distribution
+[profile.dist]
+inherits = "release"
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[features]
+dev = [
+    "bevy/dynamic_linking",
+]
+
+# All of Bevy's default features exept for the audio related ones (bevy_audio, vorbis), since they clash with bevy_kira_audio
+#   and android_shared_stdcxx/android-game-activity, since those are covered in `mobile`
 [dependencies]
 bevy = {version = "0.16.1", features = ["dynamic_linking", "jpeg", "serialize"]}
 bevy_asset_loader = { version = "0.23.0", features = ["2d"] }
@@ -18,6 +53,11 @@ rand_core = "0.9.3"
 rand = "0.9.2"
 itertools = "0.14.0"
 rstest = "0.26.1"
+# keep the following in sync with Bevy's dependencies
+winit = { version = "0.30", default-features = false }
+image = { version = "0.25", default-features = false }
+## This greatly improves WGPU's performance due to its heavy use of trace! calls
+log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
 
 # Native-only dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -27,10 +67,6 @@ getrandom = { version = "0.3.3", features = [] }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3.3", features = ["wasm_js"] }
 
-# Enable a small amount of optimization in the dev profile.
-[profile.dev]
-opt-level = 1
 
-# Enable a large amount of optimization in the dev profile for dependencies.
-[profile.dev.package."*"]
-opt-level = 3
+[build-dependencies]
+embed-resource = "1"
