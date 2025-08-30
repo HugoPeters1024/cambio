@@ -3,12 +3,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use bevy::{prelude::*, window::PrimaryWindow};
-use bevy_renet::{
-    RenetClientPlugin, client_connected,
-    netcode::{ClientAuthentication, NetcodeClientPlugin, NetcodeClientTransport},
-    renet::{ConnectionConfig, DefaultChannel, RenetClient},
-};
+use bevy::{prelude::*, time::common_conditions::on_timer, window::PrimaryWindow};
+use bevy_matchbox::prelude::*;
 use bevy_tweening::{Animator, RepeatCount, RepeatStrategy, Tween, lens::TransformPositionLens};
 
 use crate::assets::*;
@@ -25,15 +21,29 @@ pub trait ClientExt {
     fn send_claim_unreliable(&mut self, claim: ClientClaimUnreliable);
 }
 
-impl ClientExt for RenetClient {
+impl ClientExt for MatchboxSocket {
     fn send_claim(&mut self, claim: ClientClaim) {
-        let encoded = bincode::serde::encode_to_vec(&claim, bincode::config::standard()).unwrap();
-        self.send_message(DefaultChannel::ReliableOrdered, encoded);
+        let encoded = bincode::serde::encode_to_vec(&claim, bincode::config::standard())
+            .unwrap()
+            .into_boxed_slice();
+
+        let peers = self.connected_peers().collect::<Vec<_>>();
+
+        assert!(peers.len() == 1);
+        self.channel_mut(0).send(encoded, peers[0]);
     }
 
     fn send_claim_unreliable(&mut self, claim: ClientClaimUnreliable) {
-        let encoded = bincode::serde::encode_to_vec(&claim, bincode::config::standard()).unwrap();
-        self.send_message(DefaultChannel::Unreliable, encoded);
+        let encoded = bincode::serde::encode_to_vec(&claim, bincode::config::standard())
+            .unwrap()
+            .into_boxed_slice();
+
+        let peers = self.connected_peers().collect::<Vec<_>>();
+
+        assert!(peers.len() <= 1);
+        for peer in peers {
+            self.channel_mut(1).send(encoded.clone(), peer);
+        }
     }
 }
 
@@ -41,12 +51,6 @@ pub struct ClientPlugin;
 
 impl Plugin for ClientPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(RenetClientPlugin);
-        app.add_plugins(NetcodeClientPlugin);
-        let (client, transport) = new_renet_client();
-        app.insert_resource(client);
-        app.insert_resource(transport);
-
         app.add_systems(
             PostUpdate,
             ((
@@ -55,20 +59,19 @@ impl Plugin for ClientPlugin {
                 sync_held_by,
             )
                 .chain())
-            .run_if(client_connected)
             .run_if(in_state(GamePhase::Playing)),
         );
 
         fn on_player_spawn(
             trigger: Trigger<OnAdd, PlayerId>,
             player_ids: Query<&PlayerId>,
-            transport: Res<NetcodeClientTransport>,
+            mut transport: ResMut<MatchboxSocket>,
             mut commands: Commands,
         ) {
             let player_id = *player_ids.get(trigger.target()).unwrap();
 
             // Mark this player as the local player
-            if player_id.client_id == transport.client_id() {
+            if player_id.client_id == transport.id().unwrap() {
                 commands.entity(trigger.target()).insert(MyPlayer);
             }
 
@@ -95,28 +98,18 @@ impl Plugin for ClientPlugin {
             Update,
             on_message_accepted.run_if(in_state(GamePhase::Playing)),
         );
+
+        app.add_systems(Startup, start_socket);
     }
 }
 
-fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
-    const PROTOCOL_ID: u64 = 7;
-    let server_addr = "127.0.0.1:9000".parse().unwrap();
-    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let current_time = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap();
-    let client_id = current_time.as_millis() as u64;
-    let authentication = ClientAuthentication::Unsecure {
-        client_id,
-        protocol_id: PROTOCOL_ID,
-        server_addr,
-        user_data: None,
-    };
-
-    let transport = NetcodeClientTransport::new(current_time, authentication, socket).unwrap();
-    let client = RenetClient::new(ConnectionConfig::default());
-
-    (client, transport)
+fn start_socket(mut commands: Commands) {
+    let rtc_socket = WebRtcSocketBuilder::new("ws://localhost:3536/hello")
+        .add_reliable_channel()
+        .add_unreliable_channel()
+        .build();
+    let socket = MatchboxSocket::from(rtc_socket);
+    commands.insert_resource(socket);
 }
 
 fn setup(mut commands: Commands, state: Res<CambioState>, assets: Res<GameAssets>) {
@@ -201,52 +194,60 @@ fn update_player_idx_text(
 
 fn client_sync_players(
     mut commands: Commands,
-    mut client: ResMut<RenetClient>,
     state: Res<CambioState>,
     mut players: Query<&mut PlayerState>,
     me: Query<&MyPlayer>,
+    mut client: ResMut<MatchboxSocket>,
 ) {
-    while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
+    for (peer_id, peer_state) in client.update_peers() {
+        match peer_state {
+            PeerState::Connected => println!("Connected to peer {peer_id}"),
+            PeerState::Disconnected => println!("Disconnected from peer {peer_id}"),
+        }
+    }
+    for (peer_id, message) in client.channel_mut(0).receive() {
         let server_message: ServerMessage =
             bincode::serde::decode_from_slice(&message, bincode::config::standard())
                 .unwrap()
                 .0;
 
+        println!("Got message from {peer_id}: {server_message:?}");
+
         commands
             .run_system_cached_with(process_single_event.pipe(|_: In<bool>| ()), server_message);
     }
 
-    while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
-        let message: ServerMessageUnreliable =
-            bincode::serde::decode_from_slice(&message, bincode::config::standard())
-                .unwrap()
-                .0;
-        match message {
-            ServerMessageUnreliable::MousePositions(items) => {
-                for (player_id, mouse_pos) in items {
-                    if state.player_index.get(&player_id).is_none() {
-                        continue;
-                    }
-                    if me.contains(state.player_index[&player_id]) {
-                        // We use the local mouse position to reduce
-                        // visual latency
-                        continue;
-                    }
+    //while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
+    //    let message: ServerMessageUnreliable =
+    //        bincode::serde::decode_from_slice(&message, bincode::config::standard())
+    //            .unwrap()
+    //            .0;
+    //    match message {
+    //        ServerMessageUnreliable::MousePositions(items) => {
+    //            for (player_id, mouse_pos) in items {
+    //                if state.player_index.get(&player_id).is_none() {
+    //                    continue;
+    //                }
+    //                if me.contains(state.player_index[&player_id]) {
+    //                    // We use the local mouse position to reduce
+    //                    // visual latency
+    //                    continue;
+    //                }
 
-                    if let Ok(mut player_state) = players.get_mut(state.player_index[&player_id]) {
-                        player_state.last_mouse_pos_world = mouse_pos;
-                    }
-                }
-            }
-        }
-    }
+    //                if let Ok(mut player_state) = players.get_mut(state.player_index[&player_id]) {
+    //                    player_state.last_mouse_pos_world = mouse_pos;
+    //                }
+    //            }
+    //        }
+    //    }
+    //}
 }
 
 fn set_and_publish_cursor_position(
-    mut client: ResMut<RenetClient>,
     mut me: Single<&mut PlayerState, With<MyPlayer>>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform)>,
+    mut client: ResMut<MatchboxSocket>,
 ) {
     if let Some(cpos) = window.cursor_position() {
         if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, cpos) {
@@ -278,7 +279,7 @@ fn click_slot_card(
     held: Query<(Entity, &IsHeldBy)>,
     slot_ids: Query<&SlotId>,
     parents: Query<&ChildOf>,
-    mut client: ResMut<RenetClient>,
+    mut client: ResMut<MatchboxSocket>,
 ) {
     if let Ok(card) = cards.get(trigger.target()) {
         if let Ok(ChildOf(parent_entity)) = parents.get(trigger.target()) {
@@ -322,7 +323,7 @@ fn click_discard_pile(
     discard_pile: Query<Entity, With<DiscardPile>>,
     me: Single<&PlayerId, With<MyPlayer>>,
     held: Query<(Entity, &IsHeldBy, &CardId)>,
-    mut client: ResMut<RenetClient>,
+    mut client: ResMut<MatchboxSocket>,
 ) {
     if !discard_pile.contains(trigger.target()) {
         return;
@@ -335,7 +336,7 @@ fn click_discard_pile(
     };
 }
 
-fn click_deck(_trigger: Trigger<Pointer<Click>>, mut client: ResMut<RenetClient>) {
+fn click_deck(_trigger: Trigger<Pointer<Click>>, mut client: ResMut<MatchboxSocket>) {
     client.send_claim(ClientClaim::TakeFreshCardFromDeck);
 }
 
@@ -345,7 +346,7 @@ fn click_slot(
     slots: Query<(Entity, &SlotId), With<CardSlot>>,
     cards: Query<&CardId>,
     holders: Query<(Entity, &IsHeldBy)>,
-    mut client: ResMut<RenetClient>,
+    mut client: ResMut<MatchboxSocket>,
 ) {
     if let Ok((_, slot_id)) = slots.get(trigger.target()) {
         if let Some((holding_card, _)) = holders.iter().filter(|h| h.1.0 == **me).next() {

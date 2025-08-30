@@ -4,7 +4,7 @@ use std::{
 };
 
 use bevy::{platform::collections::HashMap, prelude::*};
-use bevy_renet::renet::ClientId;
+use bevy_matchbox::prelude::PeerId;
 use bevy_tweening::{Animator, Tween, lens::TransformScaleLens};
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +19,7 @@ use crate::{
 )]
 pub struct PlayerId {
     pub player_index: u8,
-    pub client_id: ClientId,
+    pub client_id: PeerId,
 }
 
 impl PlayerId {
@@ -990,14 +990,14 @@ mod tests {
     const fn player0() -> PlayerId {
         PlayerId {
             player_index: 0,
-            client_id: 0,
+            client_id: 0.into(),
         }
     }
 
     const fn player1() -> PlayerId {
         PlayerId {
             player_index: 1,
-            client_id: 1,
+            client_id: 0.into(),
         }
     }
 

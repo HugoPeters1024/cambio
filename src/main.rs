@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use bevy::window::WindowResolution;
 use bevy::winit::UpdateMode;
 use bevy::winit::WinitSettings;
-use bevy_renet::netcode::NetcodeTransportError;
 
 mod assets;
 mod cambio;
@@ -65,14 +64,5 @@ fn main() {
         app.add_plugins((GameAssetPlugin, CardPlugin));
     }
 
-    app.add_systems(Update, panic_on_error_system);
     app.run();
-}
-
-// If any error is found we just panic
-#[allow(clippy::never_loop)]
-fn panic_on_error_system(mut renet_error: EventReader<NetcodeTransportError>) {
-    for e in renet_error.read() {
-        panic!("{}", e);
-    }
 }
