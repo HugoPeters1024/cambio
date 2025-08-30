@@ -19,7 +19,7 @@ use crate::{
 )]
 pub struct PlayerId {
     pub player_index: u8,
-    pub client_id: PeerId,
+    pub peer_id: PeerId,
 }
 
 impl PlayerId {
@@ -845,6 +845,10 @@ pub fn process_single_event(
                 reject!("Player index corrupted");
             };
 
+            if may_give_card_to.contains(player_entity) {
+                reject!("Giving a card to another players is a buff that takes priority.");
+            }
+
             let mut turn_state = must_have_turn!(actor);
             match *turn_state {
                 PlayerAtTurn::TookDeckCard | PlayerAtTurn::TookDiscardedCard => {
@@ -983,6 +987,7 @@ pub fn process_single_event(
 
 #[cfg(test)]
 mod tests {
+    use bevy::asset::uuid::Uuid;
     use strum::IntoEnumIterator;
 
     use super::*;
@@ -990,14 +995,14 @@ mod tests {
     const fn player0() -> PlayerId {
         PlayerId {
             player_index: 0,
-            client_id: 0.into(),
+            peer_id: PeerId(Uuid::nil()),
         }
     }
 
     const fn player1() -> PlayerId {
         PlayerId {
             player_index: 1,
-            client_id: 0.into(),
+            peer_id: PeerId(Uuid::nil()),
         }
     }
 
@@ -1292,5 +1297,32 @@ mod tests {
             actor: player0(),
             card_id: CardId(52),
         });
+    }
+
+    #[test]
+    fn finishing_turn_will_trigger_next_player() {
+        let mut world = TestSetup::two_players_one_cards()
+            .with_all_cards_known()
+            .with_events(&[
+                ServerMessage::TakeFreshCardFromDeck {
+                    actor: player0(),
+                    card_id: CardId(2),
+                },
+                ServerMessage::DropCardOnDiscardPile {
+                    actor: player0(),
+                    card_id: CardId(2),
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                    rotation: 0.0,
+                },
+            ])
+            .get_world();
+
+        let players_at_turn = world
+            .query::<(&PlayerId, &PlayerAtTurn)>()
+            .iter(&world)
+            .map(|x| *x.0)
+            .collect::<Vec<_>>();
+        assert_eq!(players_at_turn, vec![player1()]);
     }
 }

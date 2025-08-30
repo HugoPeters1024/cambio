@@ -2,8 +2,12 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cambio::{CardId, PlayerId, SlotId}, cards::KnownCard,
+    cambio::{CardId, PlayerId, SlotId},
+    cards::KnownCard,
 };
+
+pub const RELIABLE_CHANNEL: usize = 0;
+pub const UNRELIABLE_CHANNEL: usize = 1;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ClientClaim {
@@ -102,9 +106,15 @@ pub enum ServerMessage {
 impl ServerMessage {
     pub fn redacted_for(&self, redacted_for: &PlayerId) -> ServerMessage {
         match self {
-            ServerMessage::PublishCardForPlayer { player_id, card_id, .. } => {
+            ServerMessage::PublishCardForPlayer {
+                player_id, card_id, ..
+            } => {
                 if redacted_for != player_id {
-                    ServerMessage::PublishCardForPlayer { value: None, player_id: player_id.clone(), card_id: card_id.clone() }
+                    ServerMessage::PublishCardForPlayer {
+                        value: None,
+                        player_id: player_id.clone(),
+                        card_id: card_id.clone(),
+                    }
                 } else {
                     self.clone()
                 }

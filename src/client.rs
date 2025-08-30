@@ -6,11 +6,14 @@ use bevy_tweening::{Animator, RepeatCount, RepeatStrategy, Tween, lens::Transfor
 
 use crate::assets::*;
 use crate::cambio::*;
+use crate::cards::*;
 use crate::messages::*;
-use crate::{PlayerIdxText, cards::*};
 
 #[derive(Component)]
 struct PlayerTurnIcon;
+
+#[derive(Component)]
+struct PlayerIdxText;
 
 pub trait ClientExt {
     fn send_claim(&mut self, claim: ClientClaim);
@@ -27,7 +30,7 @@ impl ClientExt for MatchboxSocket {
         let peers = self.connected_peers().collect::<Vec<_>>();
 
         assert!(peers.len() == 1);
-        self.channel_mut(0).send(encoded, peers[0]);
+        self.channel_mut(RELIABLE_CHANNEL).send(encoded, peers[0]);
     }
 
     fn send_claim_unreliable(&mut self, claim: ClientClaimUnreliable) {
@@ -39,7 +42,8 @@ impl ClientExt for MatchboxSocket {
 
         assert!(peers.len() <= 1);
         for peer in peers {
-            self.channel_mut(1).send(encoded.clone(), peer);
+            self.channel_mut(UNRELIABLE_CHANNEL)
+                .send(encoded.clone(), peer);
         }
     }
 }
@@ -68,7 +72,7 @@ impl Plugin for ClientPlugin {
             let player_id = *player_ids.get(trigger.target()).unwrap();
 
             // Mark this player as the local player
-            if player_id.client_id == transport.id().unwrap() {
+            if player_id.peer_id == transport.id().unwrap() {
                 commands.entity(trigger.target()).insert(MyPlayer);
             }
 
@@ -202,19 +206,17 @@ fn client_sync_players(
             PeerState::Disconnected => println!("Disconnected from peer {peer_id}"),
         }
     }
-    for (peer_id, message) in client.channel_mut(0).receive() {
+    for (_, message) in client.channel_mut(RELIABLE_CHANNEL).receive() {
         let server_message: ServerMessage =
             bincode::serde::decode_from_slice(&message, bincode::config::standard())
                 .unwrap()
                 .0;
 
-        println!("Got message from {peer_id}: {server_message:?}");
-
         commands
             .run_system_cached_with(process_single_event.pipe(|_: In<bool>| ()), server_message);
     }
 
-    for (_peer_id, message) in client.channel_mut(1).receive() {
+    for (_peer_id, message) in client.channel_mut(UNRELIABLE_CHANNEL).receive() {
         let message: ServerMessageUnreliable =
             bincode::serde::decode_from_slice(&message, bincode::config::standard())
                 .unwrap()

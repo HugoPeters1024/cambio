@@ -18,9 +18,6 @@ use crate::cambio::CambioPlugin;
 use crate::cards::*;
 use crate::client::ClientPlugin;
 
-#[derive(Component)]
-struct PlayerIdxText;
-
 fn main() {
     println!("Usage: run with \"server\" or \"client\" argument");
     let args: Vec<String> = std::env::args().collect();
@@ -41,7 +38,14 @@ fn main() {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            app.add_plugins(MinimalPlugins);
+            use bevy::app::{RunMode, ScheduleRunnerPlugin};
+            use std::time::Duration;
+
+            app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin {
+                run_mode: RunMode::Loop {
+                    wait: Some(Duration::from_millis(5)),
+                },
+            }));
             app.add_plugins(bevy::log::LogPlugin::default());
             app.add_plugins(CambioPlugin);
             app.add_plugins(crate::server::ServerPlugin);
@@ -51,7 +55,11 @@ fn main() {
         app.add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "float_me_pls".to_string(),
-                resolution: WindowResolution::new(640.0, 480.0),
+                resolution: WindowResolution::new(800.0, 600.0),
+                // fill the entire browser window
+                fit_canvas_to_parent: true,
+                // don't hijack keyboard shortcuts like F5, F6, F12, Ctrl+R etc.
+                prevent_default_event_handling: false,
                 ..default()
             }),
             ..default()

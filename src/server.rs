@@ -21,7 +21,7 @@ impl ServerExt for MatchboxSocket {
             .unwrap()
             .into_boxed_slice();
 
-        self.channel_mut(0).send(encoded, peer_id);
+        self.channel_mut(RELIABLE_CHANNEL).send(encoded, peer_id);
     }
 }
 
@@ -105,7 +105,7 @@ fn server_update_system(
             PeerState::Connected => {
                 let player_index = player_seq.generate();
                 let player_id = PlayerId {
-                    client_id: peer_id,
+                    peer_id,
                     player_index,
                 };
 
@@ -136,7 +136,7 @@ fn server_update_system(
                 let Some(player_id) = state
                     .player_index
                     .keys()
-                    .find(|player_id| player_id.client_id == peer_id)
+                    .find(|player_id| player_id.peer_id == peer_id)
                 else {
                     continue;
                 };
@@ -147,7 +147,7 @@ fn server_update_system(
         }
     }
 
-    for (peer_id, message) in server.channel_mut(0).receive() {
+    for (peer_id, message) in server.channel_mut(RELIABLE_CHANNEL).receive() {
         let claim: ClientClaim =
             bincode::serde::decode_from_slice(&message, bincode::config::standard())
                 .unwrap()
@@ -156,7 +156,7 @@ fn server_update_system(
         let Some(claimer_id) = state
             .player_index
             .keys()
-            .find(|player_id| player_id.client_id == peer_id)
+            .find(|player_id| player_id.peer_id == peer_id)
         else {
             warn!("Got claim from unknown peer that is not a player");
             continue;
@@ -211,11 +211,11 @@ fn server_update_system(
         commands.run_system_cached_with(process_single_event.pipe(|_: In<bool>| ()), msg);
     }
 
-    for (peer_id, message) in server.channel_mut(1).receive() {
+    for (peer_id, message) in server.channel_mut(UNRELIABLE_CHANNEL).receive() {
         let Some((_, player_entity)) = state
             .player_index
             .iter()
-            .find(|(player_id, _)| player_id.client_id == peer_id)
+            .find(|(player_id, _)| player_id.peer_id == peer_id)
         else {
             continue;
         };
@@ -270,12 +270,11 @@ fn broadcast_validated_updates(
 ) {
     let mut send = |msg: ServerMessage| {
         let peers = server.connected_peers().collect::<Vec<_>>();
-        println!("Validated claim: {msg:?}, broadcasting to {peers:?}");
         for peer_id in peers {
             let player_id = state
                 .player_index
                 .keys()
-                .find(|player_id| player_id.client_id == peer_id)
+                .find(|player_id| player_id.peer_id == peer_id)
                 .unwrap();
             server.send_message_typed(peer_id, msg.redacted_for(player_id));
         }
