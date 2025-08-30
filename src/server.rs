@@ -1,8 +1,4 @@
-use std::{
-    net::{Ipv4Addr, SocketAddrV4, UdpSocket},
-    sync::{Arc, Mutex},
-    time::SystemTime,
-};
+use std::net::{Ipv4Addr, SocketAddrV4};
 
 use bevy::prelude::*;
 use bevy_matchbox::{matchbox_signaling::SignalingServer, prelude::*};
@@ -32,15 +28,11 @@ impl ServerExt for MatchboxSocket {
 #[derive(Default, Resource)]
 struct AcceptedHistory(Vec<ServerMessage>);
 
-#[derive(Default, Resource)]
-struct SignallingToOuter(Arc<Mutex<Vec<PeerId>>>);
-
 pub struct ServerPlugin;
 
 impl Plugin for ServerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AcceptedHistory>();
-        app.init_resource::<SignallingToOuter>();
 
         // Make sure the server is all knowing wrt card lookups
         app.insert_resource(CardValueLookup(
@@ -65,8 +57,7 @@ impl Plugin for ServerPlugin {
     }
 }
 
-fn start_signaling_server(mut commands: Commands, buf: Res<SignallingToOuter>) {
-    let to_connect = buf.0.clone();
+fn start_signaling_server(mut commands: Commands) {
     info!("Starting signaling server");
     let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 3536);
     let signaling_server = MatchboxServer::from(
@@ -78,10 +69,7 @@ fn start_signaling_server(mut commands: Commands, buf: Res<SignallingToOuter>) {
             .on_id_assignment(|(socket, id)| info!("{socket} received {id}"))
             .on_host_connected(|id| info!("Host joined: {id}"))
             .on_host_disconnected(|id| info!("Host left: {id}"))
-            .on_client_connected(move |id| {
-                info!("Client like peer joined: {id}");
-                to_connect.lock().unwrap().push(id);
-            })
+            .on_client_connected(move |id| info!("Client joined: {id}"))
             .on_client_disconnected(|id| info!("Client left: {id}"))
             .cors()
             .trace()
@@ -91,7 +79,12 @@ fn start_signaling_server(mut commands: Commands, buf: Res<SignallingToOuter>) {
 }
 
 fn start_host_socket(mut commands: Commands) {
-    let socket = MatchboxSocket::new_reliable("ws://localhost:3536/hello");
+    let rtc_socket = WebRtcSocketBuilder::new("ws://localhost:3536/hello")
+        .add_reliable_channel()
+        .add_unreliable_channel()
+        .build();
+
+    let socket = MatchboxSocket::from(rtc_socket);
     commands.insert_resource(socket);
 }
 
@@ -104,7 +97,6 @@ fn server_update_system(
     mut slot_seq: Local<Seq<u64>>,
     accepted_history: Res<AcceptedHistory>,
     mut entropy: GlobalEntropy<WyRand>,
-    mut signaling_to_outer: ResMut<SignallingToOuter>,
 ) {
     let mut to_process: Vec<ServerMessage> = Vec::new();
 
@@ -148,7 +140,9 @@ fn server_update_system(
                 else {
                     continue;
                 };
-                to_process.push(ServerMessage::PlayerDisconnected { player_id: *player_id });
+                to_process.push(ServerMessage::PlayerDisconnected {
+                    player_id: *player_id,
+                });
             }
         }
     }
@@ -217,42 +211,50 @@ fn server_update_system(
         commands.run_system_cached_with(process_single_event.pipe(|_: In<bool>| ()), msg);
     }
 
-    //for (player_id, player_entity) in state.player_index.iter() {
-    //    while let Some(message) =
-    //        server.receive_message(player_id.client_id, DefaultChannel::Unreliable)
-    //    {
-    //        let claim: ClientClaimUnreliable =
-    //            bincode::serde::decode_from_slice(&message, bincode::config::standard())
-    //                .unwrap()
-    //                .0;
+    for (peer_id, message) in server.channel_mut(1).receive() {
+        let Some((_, player_entity)) = state
+            .player_index
+            .iter()
+            .find(|(player_id, _)| player_id.client_id == peer_id)
+        else {
+            continue;
+        };
 
-    //        match claim {
-    //            ClientClaimUnreliable::MousePosition(mouse_pos) => {
-    //                if let Ok((_, mut player_state)) = players.get_mut(*player_entity) {
-    //                    player_state.last_mouse_pos_world = mouse_pos;
-    //                }
-    //            }
-    //        }
-    //    }
-    //}
+        let claim: ClientClaimUnreliable =
+            bincode::serde::decode_from_slice(&message, bincode::config::standard())
+                .unwrap()
+                .0;
 
-    //let mouse_update = ServerMessageUnreliable::MousePositions(
-    //    state
-    //        .player_index
-    //        .iter()
-    //        .filter_map(|(&id, player)| {
-    //            players
-    //                .get(*player)
-    //                .ok()
-    //                .map(|p| (id, p.1.last_mouse_pos_world))
-    //        })
-    //        .collect(),
-    //);
+        match claim {
+            ClientClaimUnreliable::MousePosition(mouse_pos) => {
+                if let Ok((_, mut player_state)) = players.get_mut(*player_entity) {
+                    player_state.last_mouse_pos_world = mouse_pos;
+                }
+            }
+        }
+    }
 
-    //server.broadcast_message(
-    //    DefaultChannel::Unreliable,
-    //    bincode::serde::encode_to_vec(mouse_update, bincode::config::standard()).unwrap(),
-    //);
+    let mouse_update = ServerMessageUnreliable::MousePositions(
+        state
+            .player_index
+            .iter()
+            .filter_map(|(&id, player)| {
+                players
+                    .get(*player)
+                    .ok()
+                    .map(|p| (id, p.1.last_mouse_pos_world))
+            })
+            .collect(),
+    );
+
+    let encoded = bincode::serde::encode_to_vec(&mouse_update, bincode::config::standard())
+        .unwrap()
+        .into_boxed_slice();
+
+    let peers = server.connected_peers().collect::<Vec<_>>();
+    for peer_id in peers {
+        server.channel_mut(1).send(encoded.clone(), peer_id);
+    }
 }
 
 fn recover_from_rejected(mut drain: ResMut<MessageDrain>) {

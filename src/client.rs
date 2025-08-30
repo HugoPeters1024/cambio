@@ -1,9 +1,6 @@
-use std::{
-    net::UdpSocket,
-    time::{Duration, SystemTime},
-};
+use std::time::Duration;
 
-use bevy::{prelude::*, time::common_conditions::on_timer, window::PrimaryWindow};
+use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_matchbox::prelude::*;
 use bevy_tweening::{Animator, RepeatCount, RepeatStrategy, Tween, lens::TransformPositionLens};
 
@@ -217,30 +214,30 @@ fn client_sync_players(
             .run_system_cached_with(process_single_event.pipe(|_: In<bool>| ()), server_message);
     }
 
-    //while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
-    //    let message: ServerMessageUnreliable =
-    //        bincode::serde::decode_from_slice(&message, bincode::config::standard())
-    //            .unwrap()
-    //            .0;
-    //    match message {
-    //        ServerMessageUnreliable::MousePositions(items) => {
-    //            for (player_id, mouse_pos) in items {
-    //                if state.player_index.get(&player_id).is_none() {
-    //                    continue;
-    //                }
-    //                if me.contains(state.player_index[&player_id]) {
-    //                    // We use the local mouse position to reduce
-    //                    // visual latency
-    //                    continue;
-    //                }
+    for (_peer_id, message) in client.channel_mut(1).receive() {
+        let message: ServerMessageUnreliable =
+            bincode::serde::decode_from_slice(&message, bincode::config::standard())
+                .unwrap()
+                .0;
+        match message {
+            ServerMessageUnreliable::MousePositions(items) => {
+                for (player_id, mouse_pos) in items {
+                    if state.player_index.get(&player_id).is_none() {
+                        continue;
+                    }
+                    if me.contains(state.player_index[&player_id]) {
+                        // We use the local mouse position to reduce
+                        // visual latency
+                        continue;
+                    }
 
-    //                if let Ok(mut player_state) = players.get_mut(state.player_index[&player_id]) {
-    //                    player_state.last_mouse_pos_world = mouse_pos;
-    //                }
-    //            }
-    //        }
-    //    }
-    //}
+                    if let Ok(mut player_state) = players.get_mut(state.player_index[&player_id]) {
+                        player_state.last_mouse_pos_world = mouse_pos;
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn set_and_publish_cursor_position(

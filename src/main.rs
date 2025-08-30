@@ -8,14 +8,15 @@ mod cambio;
 mod cards;
 mod client;
 mod messages;
-mod server;
 mod utils;
+
+#[cfg(not(target_arch = "wasm32"))]
+mod server;
 
 use crate::assets::*;
 use crate::cambio::CambioPlugin;
 use crate::cards::*;
 use crate::client::ClientPlugin;
-use crate::server::ServerPlugin;
 
 #[derive(Component)]
 struct PlayerIdxText;
@@ -35,11 +36,17 @@ fn main() {
     app.add_plugins(bevy_rand::plugin::EntropyPlugin::<bevy_rand::prelude::WyRand>::default());
 
     if is_host {
-        app.add_plugins(MinimalPlugins);
-        app.add_plugins(bevy::log::LogPlugin::default());
-        app.add_plugins(CambioPlugin);
-        app.add_plugins(ServerPlugin);
-        app.insert_resource(Time::<Fixed>::from_hz(300.0));
+        #[cfg(target_arch = "wasm32")]
+        panic!("Server is not supported on this platform");
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            app.add_plugins(MinimalPlugins);
+            app.add_plugins(bevy::log::LogPlugin::default());
+            app.add_plugins(CambioPlugin);
+            app.add_plugins(crate::server::ServerPlugin);
+            app.insert_resource(Time::<Fixed>::from_hz(300.0));
+        }
     } else {
         app.add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
