@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_matchbox::prelude::*;
-use bevy_tweening::{Animator, RepeatCount, RepeatStrategy, Tween, lens::TransformPositionLens};
+use bevy_tweening::lens::TransformRotateZLens;
+use bevy_tweening::{Animator, RepeatCount, RepeatStrategy, Tween, lens::*};
 
 use crate::assets::*;
 use crate::cambio::*;
@@ -291,6 +292,7 @@ fn click_slot_card(
                             let held_card_id = *cards.get(held_card).unwrap();
                             client.send_claim(ClientClaim::SwapHeldCardWithSlotCard {
                                 slot_id: *slot_id,
+                                slot_card_id: *card,
                                 held_card_id,
                             });
                         } else {
@@ -414,35 +416,63 @@ fn on_message_accepted(
     assets: Res<GameAssets>,
     mut drain: ResMut<MessageDrain>,
     mut catched_up: Local<bool>,
+    state: Res<CambioState>,
 ) {
     for msg in drain.drain_accepted() {
+        if msg == ServerMessage::FinishedReplayingHistory {
+            *catched_up = true;
+        }
+        if !*catched_up {
+            continue;
+        }
+
         match msg {
-            ServerMessage::FinishedReplayingHistory => {
-                *catched_up = true;
-            }
-            ServerMessage::TakeFreshCardFromDeck { .. } => {
-                if *catched_up {
-                    commands.spawn((
-                        AudioPlayer::new(assets.card_sweep.clone()),
-                        PlaybackSettings::DESPAWN,
-                    ));
+            ServerMessage::ReceiveFreshCardFromDeck { card_id, .. } => {
+                if let Some(card_entity) = state.card_index.get(&card_id) {
+                    commands
+                        .entity(*card_entity)
+                        .insert(Animator::new(Tween::new(
+                            EaseFunction::CubicOut,
+                            Duration::from_millis(500),
+                            TransformScaleLens {
+                                start: Vec3::ZERO,
+                                end: Vec3::ONE,
+                            },
+                        )));
                 }
             }
-            ServerMessage::SwapHeldCardWithSlotCard { .. } => {
-                if *catched_up {
-                    commands.spawn((
-                        AudioPlayer::new(assets.card_swap.clone()),
-                        PlaybackSettings::DESPAWN,
+            ServerMessage::TakeFreshCardFromDeck { .. } => {
+                commands.spawn((
+                    AudioPlayer::new(assets.card_sweep.clone()),
+                    PlaybackSettings::DESPAWN,
+                ));
+            }
+            ServerMessage::SwapHeldCardWithSlotCard { slot_card_id, .. } => {
+                commands.spawn((
+                    AudioPlayer::new(assets.card_swap.clone()),
+                    PlaybackSettings::DESPAWN,
+                ));
+
+                if let Some(card_entity) = state.card_index.get(&slot_card_id) {
+                    commands.entity(*card_entity).insert(Animator::new(
+                        Tween::new(
+                            EaseFunction::Linear,
+                            Duration::from_millis(50),
+                            TransformRotateZLens {
+                                start: -std::f32::consts::PI / 12.0,
+                                end: std::f32::consts::PI / 12.0,
+                            },
+                        )
+                        .with_repeat_strategy(RepeatStrategy::MirroredRepeat)
+                        .with_repeat_count(Duration::from_millis(175)),
                     ));
                 }
             }
             ServerMessage::DropCardOnSlot { .. } | ServerMessage::DropCardOnDiscardPile { .. } => {
-                if *catched_up {
-                    commands.spawn((
-                        AudioPlayer::new(assets.card_laydown.clone()),
-                        PlaybackSettings::DESPAWN,
-                    ));
-                }
+                commands.spawn((
+                    AudioPlayer::new(assets.card_laydown.clone()),
+                    PlaybackSettings::DESPAWN,
+                ));
             }
             _ => (),
         }

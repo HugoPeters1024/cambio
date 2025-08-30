@@ -1,11 +1,7 @@
-use std::{
-    collections::{HashSet, VecDeque},
-    time::Duration,
-};
+use std::collections::{HashSet, VecDeque};
 
 use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_matchbox::prelude::PeerId;
-use bevy_tweening::{Animator, Tween, lens::TransformScaleLens};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -315,19 +311,6 @@ pub fn process_single_event(
         }};
     }
 
-    macro_rules! try_get_slot_card {
-        ($slot_id: expr) => {{
-            let &slot_entity = slot_must_exists!($slot_id);
-            let mut found = None;
-            for child in children.iter_descendants(slot_entity) {
-                if let Ok(card_id) = card_ids.get(child) {
-                    found = Some(*card_id);
-                }
-            }
-            found
-        }};
-    }
-
     macro_rules! must_have_turn {
         ($player_id: expr) => {{
             let &player_entity = player_must_exists!($player_id);
@@ -445,14 +428,6 @@ pub fn process_single_event(
                     Transform::from_xyz(0.0, 0.0, 1.0),
                     ChildOf(slot_entity),
                     Pickable::default(),
-                    Animator::new(Tween::new(
-                        EaseFunction::CubicOut,
-                        Duration::from_millis(500),
-                        TransformScaleLens {
-                            start: Vec3::ZERO,
-                            end: Vec3::ONE,
-                        },
-                    )),
                 ))
                 .id();
 
@@ -828,16 +803,14 @@ pub fn process_single_event(
         ServerMessage::SwapHeldCardWithSlotCard {
             actor,
             slot_id,
+            slot_card_id,
             held_card_id,
         } => {
             let &player_entity = player_must_exists!(actor);
             let &slot_entity = slot_must_exists!(slot_id);
             let &held_card_entity = card_must_exists!(held_card_id);
             player_must_be_holding_card!(actor, held_card_id);
-
-            let Some(slot_card_id) = try_get_slot_card!(slot_id) else {
-                reject!("Slot is empty.");
-            };
+            slot_must_have_card!(slot_id, slot_card_id);
 
             let &slot_card_entity = card_must_exists!(slot_card_id);
 
@@ -1200,6 +1173,7 @@ mod tests {
                 },
                 ServerMessage::SwapHeldCardWithSlotCard {
                     actor: player0(),
+                    slot_card_id: CardId(0),
                     held_card_id: CardId(1),
                     slot_id: SlotId(0),
                 },
@@ -1236,6 +1210,7 @@ mod tests {
                 ServerMessage::SwapHeldCardWithSlotCard {
                     actor: player0(),
                     held_card_id: CardId(5),
+                    slot_card_id: CardId(0),
                     slot_id: SlotId(0),
                 },
                 ServerMessage::PublishCardPublically {

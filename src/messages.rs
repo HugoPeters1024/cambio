@@ -30,6 +30,7 @@ pub enum ClientClaim {
     TakeCardFromDiscardPile,
     SwapHeldCardWithSlotCard {
         slot_id: SlotId,
+        slot_card_id: CardId,
         held_card_id: CardId,
     },
 }
@@ -68,6 +69,7 @@ pub enum ServerMessage {
     SwapHeldCardWithSlotCard {
         actor: PlayerId,
         slot_id: SlotId,
+        slot_card_id: CardId,
         held_card_id: CardId,
     },
     DropCardOnSlot {

@@ -128,7 +128,7 @@ fn server_update_system(
                     });
                 }
 
-                if player_index == 0 {
+                if state.player_index.is_empty() {
                     to_process.push(ServerMessage::PlayerAtTurn { player_id });
                 }
             }
@@ -196,10 +196,12 @@ fn server_update_system(
             }
             ClientClaim::SwapHeldCardWithSlotCard {
                 slot_id,
+                slot_card_id,
                 held_card_id,
             } => ServerMessage::SwapHeldCardWithSlotCard {
                 actor: *claimer_id,
                 slot_id,
+                slot_card_id,
                 held_card_id,
             },
         };
