@@ -106,7 +106,7 @@ impl Plugin for ClientPlugin {
 }
 
 fn start_socket(mut commands: Commands) {
-    let rtc_socket = WebRtcSocketBuilder::new("ws://hugopeters.me:3536/hello")
+    let rtc_socket = WebRtcSocketBuilder::new("wss://hugopeters.me:3536")
         .add_reliable_channel()
         .add_unreliable_channel()
         .build();
