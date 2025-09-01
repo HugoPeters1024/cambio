@@ -1,7 +1,9 @@
 use bevy::{color::palettes::css::*, prelude::*};
-use bevy_ui_text_input::{TextInputContents, TextInputMode, TextInputNode};
+use bevy_ui_text_input::{
+    TextInputContents, TextInputMode, TextInputNode, TextInputPrompt,
+};
 
-use crate::assets::GamePhase;
+use crate::{assets::GamePhase, client::ConnectionSettings};
 
 const NORMAL_BUTTON: Color = Color::srgb(0.15, 0.15, 0.15);
 const HOVERED_BUTTON: Color = Color::srgb(0.25, 0.25, 0.25);
@@ -93,8 +95,13 @@ fn setup_menu(mut commands: Commands) {
                             ..default()
                         },
                         BorderRadius::all(Val::Px(5.0)),
+                        TextInputPrompt {
+                            text: "wss://hugopeters.me:3536".to_string(),
+                            ..default()
+                        },
                         TextInputNode {
                             mode: TextInputMode::SingleLine,
+                            clear_on_submit: false,
                             ..default()
                         },
                         TextInputContents::default(),
@@ -134,6 +141,11 @@ fn setup_menu(mut commands: Commands) {
                         BorderRadius::all(Val::Px(5.0)),
                         TextInputNode {
                             mode: TextInputMode::SingleLine,
+                            clear_on_submit: false,
+                            ..default()
+                        },
+                        TextInputPrompt {
+                            text: "John Doe".to_string(),
                             ..default()
                         },
                         TextFont {
@@ -147,12 +159,13 @@ fn setup_menu(mut commands: Commands) {
             ));
         });
 
-    let start_button = commands.spawn((
+    // start button
+    commands.spawn((
         ChildOf(root),
         Button,
         StartButton,
         Node {
-            width: Val::Px(150.0),
+            width: Val::Px(180.0),
             height: Val::Px(65.0),
             border: UiRect::all(Val::Px(5.0)),
             // horizontally center child text
@@ -165,9 +178,9 @@ fn setup_menu(mut commands: Commands) {
         BorderRadius::MAX,
         BackgroundColor(NORMAL_BUTTON),
         children![(
-            Text::new("Button"),
+            Text::new("Play Cambio"),
             TextFont {
-                font_size: 33.0,
+                font_size: 21.0,
                 ..default()
             },
             TextColor(Color::srgb(0.9, 0.9, 0.9)),
@@ -183,36 +196,42 @@ fn remove_menu(mut commands: Commands, query: Query<Entity, With<MenuRoot>>) {
 }
 
 fn button_system(
+    mut commands: Commands,
     mut interaction_query: Query<
-        (
-            &Interaction,
-            &mut BackgroundColor,
-            &mut BorderColor,
-            &Children,
-        ),
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
         (Changed<Interaction>, With<Button>),
     >,
-    server_url_input: Single<&TextInputContents, With<ServerUrlInput>>,
-    mut text_query: Query<&mut Text>,
+    server_url_input: Single<(&TextInputContents, &TextInputPrompt), With<ServerUrlInput>>,
+    username_input: Single<(&TextInputContents, &TextInputPrompt), With<UsernameInput>>,
     mut next_state: ResMut<NextState<GamePhase>>,
 ) {
-    for (interaction, mut color, mut border_color, children) in &mut interaction_query {
-        let mut text = text_query.get_mut(children[0]).unwrap();
+    for (interaction, mut color, mut border_color) in &mut interaction_query {
         match *interaction {
             Interaction::Pressed => {
-                **text = "Press".to_string();
                 *color = PRESSED_BUTTON.into();
                 border_color.0 = RED.into();
+                let server_url = if server_url_input.0.get().is_empty() {
+                    server_url_input.1.text.as_str()
+                } else {
+                    server_url_input.0.get()
+                }
+                .to_string();
+
+                let username = if username_input.0.get().is_empty() {
+                    username_input.1.text.as_str()
+                } else {
+                    username_input.0.get()
+                }
+                .to_string();
+
+                commands.insert_resource(ConnectionSettings { server_url });
                 next_state.set(GamePhase::Playing);
             }
             Interaction::Hovered => {
-                **text = "Hover".to_string();
                 *color = HOVERED_BUTTON.into();
                 border_color.0 = Color::WHITE;
-                println!("server url: {}", server_url_input.get());
             }
             Interaction::None => {
-                **text = "Button".to_string();
                 *color = NORMAL_BUTTON.into();
                 border_color.0 = Color::BLACK;
             }

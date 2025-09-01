@@ -10,6 +10,11 @@ use crate::cambio::*;
 use crate::cards::*;
 use crate::messages::*;
 
+#[derive(Resource)]
+pub struct ConnectionSettings {
+    pub server_url: String,
+}
+
 #[derive(Component)]
 struct PlayerTurnIcon;
 
@@ -106,8 +111,8 @@ impl Plugin for ClientPlugin {
     }
 }
 
-fn start_socket(mut commands: Commands) {
-    let rtc_socket = WebRtcSocketBuilder::new("wss://hugopeters.me:3536")
+fn start_socket(mut commands: Commands, connection_settings: Res<ConnectionSettings>) {
+    let rtc_socket = WebRtcSocketBuilder::new(&connection_settings.server_url)
         .add_reliable_channel()
         .add_unreliable_channel()
         .build();
