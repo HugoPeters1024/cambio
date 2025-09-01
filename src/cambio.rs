@@ -146,12 +146,6 @@ pub fn spawn_cambio_root(mut commands: Commands) {
         .spawn((
             Name::new("Discard Pile"),
             DiscardPile,
-            Transform::from_xyz(0.0, 0.0, 0.0),
-            Sprite::from_color(
-                Color::srgb(0.0, 0.0, 0.2),
-                Vec2::new(DESIRED_CARD_WIDTH, DESIRED_CARD_HEIGHT),
-            ),
-            Pickable::default(),
         ))
         .id();
 

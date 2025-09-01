@@ -94,7 +94,21 @@ impl Plugin for ClientPlugin {
             ));
         }
 
+        fn on_discard_pile_spawn(trigger: Trigger<OnAdd, DiscardPile>, mut commands: Commands) {
+            commands.entity(trigger.target()).insert((
+                Name::new("Discard Pile"),
+                DiscardPile,
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                Sprite::from_color(
+                    Color::srgb(0.0, 0.0, 0.2),
+                    Vec2::new(DESIRED_CARD_WIDTH, DESIRED_CARD_HEIGHT),
+                ),
+                Pickable::default(),
+            ));
+        }
+
         app.add_observer(on_player_spawn);
+        app.add_observer(on_discard_pile_spawn);
         app.add_observer(click_slot_card);
         app.add_observer(click_slot);
         app.add_observer(click_discard_pile);
