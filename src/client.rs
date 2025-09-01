@@ -321,6 +321,7 @@ fn click_slot_card(
 fn click_discard_pile(
     trigger: Trigger<Pointer<Click>>,
     discard_pile: Query<Entity, With<DiscardPile>>,
+    state: Single<&CambioState>,
     me: Single<&PlayerId, With<MyPlayer>>,
     held: Query<(Entity, &IsHeldBy, &CardId)>,
     mut client: ResMut<MatchboxSocket>,
@@ -332,7 +333,11 @@ fn click_discard_pile(
     if let Some((_, _, &card_id)) = held.iter().find(|(_, held_by, _)| &held_by.0 == *me) {
         client.send_claim(ClientClaim::DropCardOnDiscardPile { card_id });
     } else {
-        client.send_claim(ClientClaim::TakeCardFromDiscardPile);
+        if state.discard_pile.len() >= 1 {
+            client.send_claim(ClientClaim::TakeCardFromDiscardPile {
+                card_id: state.discard_pile[0],
+            });
+        }
     };
 }
 
@@ -471,6 +476,12 @@ fn on_message_accepted(
             ServerMessage::DropCardOnSlot { .. } | ServerMessage::DropCardOnDiscardPile { .. } => {
                 commands.spawn((
                     AudioPlayer::new(assets.card_laydown.clone()),
+                    PlaybackSettings::DESPAWN,
+                ));
+            }
+            ServerMessage::ShuffleDiscardPile { .. } => {
+                commands.spawn((
+                    AudioPlayer::new(assets.vo_shuffle.clone()),
                     PlaybackSettings::DESPAWN,
                 ));
             }

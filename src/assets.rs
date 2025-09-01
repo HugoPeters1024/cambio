@@ -29,6 +29,9 @@ pub struct GameAssets {
 
     #[asset(path = "card_laydown.ogg")]
     pub card_laydown: Handle<AudioSource>,
+
+    #[asset(path = "vo_shuffle.ogg")]
+    pub vo_shuffle: Handle<AudioSource>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Default, States)]

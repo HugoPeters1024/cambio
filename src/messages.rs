@@ -27,7 +27,9 @@ pub enum ClientClaim {
     DropCardOnDiscardPile {
         card_id: CardId,
     },
-    TakeCardFromDiscardPile,
+    TakeCardFromDiscardPile {
+        card_id: CardId,
+    },
     SwapHeldCardWithSlotCard {
         slot_id: SlotId,
         slot_card_id: CardId,
@@ -57,6 +59,8 @@ pub enum ServerMessage {
         actor: PlayerId,
         card_id: CardId,
         slot_id: SlotId,
+        // should the actor have the turn
+        check_turn: bool,
     },
     /// Always means that some player picked up this
     /// card. This action is never taken as part of the
@@ -90,6 +94,7 @@ pub enum ServerMessage {
     },
     TakeCardFromDiscardPile {
         actor: PlayerId,
+        card_id: CardId,
     },
     PlayerAtTurn {
         player_id: PlayerId,
@@ -102,6 +107,9 @@ pub enum ServerMessage {
         player_id: PlayerId,
         card_id: CardId,
         value: Option<KnownCard>,
+    },
+    ShuffleDiscardPile {
+        card_ids: Vec<CardId>,
     },
 }
 

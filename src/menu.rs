@@ -1,7 +1,5 @@
 use bevy::{color::palettes::css::*, prelude::*};
-use bevy_ui_text_input::{
-    TextInputContents, TextInputMode, TextInputNode, TextInputPrompt,
-};
+use bevy_ui_text_input::{TextInputContents, TextInputMode, TextInputNode, TextInputPrompt};
 
 use crate::{assets::GamePhase, client::ConnectionSettings};
 

@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy_matchbox::{matchbox_signaling::SignalingServer, prelude::*};
 use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
 use rand::Rng;
+use rand::seq::SliceRandom;
 use strum::IntoEnumIterator;
 
 use crate::cambio::*;
@@ -88,13 +89,20 @@ fn start_host_socket(mut commands: Commands) {
     commands.insert_resource(socket);
 }
 
-fn decide_on_card_values(mut state: Single<&mut CambioState>) {
+fn decide_on_card_values(mut state: Single<&mut CambioState>, mut entropy: GlobalEntropy<WyRand>) {
     // Make sure the server is all knowing wrt card lookups
+    let mut values: Vec<KnownCard> = Suit::iter()
+        .flat_map(|suit| Rank::iter().map(move |rank| KnownCard { rank, suit }))
+        .collect();
+
+    // shuffle the cards
+    values.shuffle(&mut entropy);
+
     state.card_lookup = CardValueLookup(
-        Suit::iter()
-            .flat_map(|suit| Rank::iter().map(move |rank| KnownCard { rank, suit }))
+        values
+            .into_iter()
             .enumerate()
-            .map(|(index, card)| (CardId(index as u64), card))
+            .map(|(i, card)| (CardId(i as u64), card))
             .collect(),
     );
 }
@@ -110,7 +118,46 @@ fn server_update_system(
     mut entropy: GlobalEntropy<WyRand>,
 ) {
     let (root, state) = *state;
-    let mut to_process: Vec<ServerMessage> = Vec::new();
+
+    fn trigger_event(commands: &mut Commands, msg: ServerMessage, root: &Entity) {
+        commands.run_system_cached_with(process_single_event.pipe(|_: In<bool>| ()), (*root, msg));
+        commands.run_system_cached_with(trigger_server_events, *root);
+    }
+
+    fn give_card_to_player(
+        In((player_id, slot_id, reveal)): In<(PlayerId, SlotId, bool)>,
+        mut commands: Commands,
+        state: Single<(Entity, &CambioState)>,
+    ) {
+        let (root, state) = *state;
+        let front_card = state.free_cards[0];
+        commands.run_system_cached_with(
+            process_single_event.pipe(|_: In<bool>| ()),
+            (
+                root,
+                ServerMessage::ReceiveFreshCardFromDeck {
+                    actor: player_id,
+                    slot_id,
+                    card_id: front_card,
+                },
+            ),
+        );
+
+        if reveal {
+            commands.run_system_cached_with(
+                process_single_event.pipe(|_: In<bool>| ()),
+                (
+                    root,
+                    ServerMessage::RevealCardAtSlot {
+                        actor: player_id,
+                        slot_id,
+                        card_id: front_card,
+                        check_turn: false,
+                    },
+                ),
+            );
+        };
+    }
 
     for (peer_id, peer_state) in server.update_peers() {
         match peer_state {
@@ -125,23 +172,32 @@ fn server_update_system(
                     server.send_message_typed(peer_id, msg.redacted_for(&player_id));
                 }
                 server.send_message_typed(peer_id, ServerMessage::FinishedReplayingHistory);
-                to_process.push(ServerMessage::PlayerConnected { player_id });
+                trigger_event(
+                    &mut commands,
+                    ServerMessage::PlayerConnected { player_id },
+                    &root,
+                );
 
                 for i in 0..4 {
                     let slot_id = SlotId(slot_seq.generate());
-                    to_process.push(ServerMessage::ReceiveFreshSlot {
-                        actor: player_id,
-                        slot_id,
-                    });
-                    to_process.push(ServerMessage::ReceiveFreshCardFromDeck {
-                        actor: player_id,
-                        slot_id,
-                        card_id: state.free_cards[i],
-                    });
+                    trigger_event(
+                        &mut commands,
+                        ServerMessage::ReceiveFreshSlot {
+                            actor: player_id,
+                            slot_id,
+                        },
+                        &root,
+                    );
+                    commands
+                        .run_system_cached_with(give_card_to_player, (player_id, slot_id, i < 2));
                 }
 
                 if state.player_index.is_empty() {
-                    to_process.push(ServerMessage::PlayerAtTurn { player_id });
+                    trigger_event(
+                        &mut commands,
+                        ServerMessage::PlayerAtTurn { player_id },
+                        &root,
+                    );
                 }
             }
             PeerState::Disconnected => {
@@ -152,9 +208,13 @@ fn server_update_system(
                 else {
                     continue;
                 };
-                to_process.push(ServerMessage::PlayerDisconnected {
-                    player_id: *player_id,
-                });
+                trigger_event(
+                    &mut commands,
+                    ServerMessage::PlayerDisconnected {
+                        player_id: *player_id,
+                    },
+                    &root,
+                );
             }
         }
     }
@@ -189,6 +249,7 @@ fn server_update_system(
                 actor: *claimer_id,
                 card_id,
                 slot_id,
+                check_turn: true,
             },
             ClientClaim::TakeFreshCardFromDeck => ServerMessage::TakeFreshCardFromDeck {
                 actor: *claimer_id,
@@ -203,8 +264,11 @@ fn server_update_system(
                     rotation: entropy.random_range(-0.4..0.4),
                 }
             }
-            ClientClaim::TakeCardFromDiscardPile => {
-                ServerMessage::TakeCardFromDiscardPile { actor: *claimer_id }
+            ClientClaim::TakeCardFromDiscardPile { card_id } => {
+                ServerMessage::TakeCardFromDiscardPile {
+                    actor: *claimer_id,
+                    card_id,
+                }
             }
             ClientClaim::SwapHeldCardWithSlotCard {
                 slot_id,
@@ -218,11 +282,7 @@ fn server_update_system(
             },
         };
 
-        to_process.push(server_message);
-    }
-
-    for msg in to_process.drain(..) {
-        commands.run_system_cached_with(process_single_event.pipe(|_: In<bool>| ()), (root, msg));
+        trigger_event(&mut commands, server_message, &root);
     }
 
     for (peer_id, message) in server.channel_mut(UNRELIABLE_CHANNEL).receive() {
@@ -268,6 +328,21 @@ fn server_update_system(
     let peers = server.connected_peers().collect::<Vec<_>>();
     for peer_id in peers {
         server.channel_mut(1).send(encoded.clone(), peer_id);
+    }
+}
+
+fn trigger_server_events(root: In<Entity>, mut commands: Commands, q: Query<&CambioState>) {
+    let state = q.get(*root).unwrap();
+    if state.free_cards.is_empty() {
+        commands.run_system_cached_with(
+            process_single_event.pipe(|_: In<bool>| ()),
+            (
+                *root,
+                ServerMessage::ShuffleDiscardPile {
+                    card_ids: state.discard_pile.iter().skip(1).cloned().collect(),
+                },
+            ),
+        );
     }
 }
 
