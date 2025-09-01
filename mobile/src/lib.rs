@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use bevy::window::WindowMode;
 use bevy::winit::WinitSettings;
-use bevy_game::GamePlugin; // ToDo: Replace bevy_game with your new crate name.
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn main_rs() {
@@ -24,18 +23,19 @@ fn main() {
         }
     }
 
-    App::new()
-        .insert_resource(WinitSettings::mobile())
-        .add_plugins((
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    resizable: false,
-                    mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
-                    ..default()
-                }),
+    let mut app = App::new();
+    app.insert_resource(WinitSettings::mobile());
+    app.add_plugins(
+        (DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                resizable: false,
+                mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
                 ..default()
             }),
-            GamePlugin,
-        ))
-        .run();
+            ..default()
+        })),
+    );
+    app.world_mut()
+        .spawn(Text2d::new("Mobile  support for Cambio Online is Todo"));
+    app.run();
 }

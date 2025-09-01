@@ -98,44 +98,29 @@ pub struct PlayerState {
     pub slots: HashSet<Entity>,
 }
 
-#[derive(Resource)]
+#[derive(Component, Clone)]
 pub struct CambioState {
-    pub root: Entity,
     pub free_cards: VecDeque<CardId>,
     pub card_index: HashMap<CardId, Entity>,
     pub slot_index: HashMap<SlotId, Entity>,
     pub player_index: HashMap<PlayerId, Entity>,
+    pub message_drain: MessageDrain,
+    pub card_lookup: CardValueLookup,
 }
 
-#[derive(Resource, Default)]
+#[derive(Default, Clone)]
 pub struct MessageDrain {
-    accepted: VecDeque<ServerMessage>,
-    rejected: VecDeque<ServerMessage>,
+    pub accepted: VecDeque<ServerMessage>,
+    pub rejected: VecDeque<ServerMessage>,
 }
 
-#[derive(Resource, Default)]
+#[derive(Clone, Default)]
 pub struct CardValueLookup(pub HashMap<CardId, KnownCard>);
-
-impl MessageDrain {
-    pub fn drain_accepted(&mut self) -> std::collections::vec_deque::Drain<'_, ServerMessage> {
-        self.accepted.drain(..)
-    }
-
-    pub fn drain_rejected(&mut self) -> std::collections::vec_deque::Drain<'_, ServerMessage> {
-        self.rejected.drain(..)
-    }
-}
 
 pub struct CambioPlugin;
 
 impl Plugin for CambioPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MessageDrain>();
-        app.init_resource::<CardValueLookup>();
-        app.world_mut()
-            .run_system_cached(setup_game_resource)
-            .unwrap();
-
         app.add_systems(Update, handle_unreveal_timer);
     }
 }
@@ -156,13 +141,22 @@ fn handle_unreveal_timer(
     }
 }
 
-fn setup_game_resource(mut commands: Commands) {
+pub fn spawn_cambio_root(mut commands: Commands) {
+    println!("Spawning cambio root");
     let root = commands
         .spawn((
             Name::new("Cambio"),
             InheritedVisibility::default(),
             Transform::default(),
             CambioRoot,
+            CambioState {
+                free_cards: (0..52).map(CardId).collect(),
+                card_index: HashMap::new(),
+                slot_index: HashMap::new(),
+                player_index: HashMap::new(),
+                message_drain: MessageDrain::default(),
+                card_lookup: CardValueLookup::default(),
+            },
         ))
         .id();
 
@@ -179,21 +173,11 @@ fn setup_game_resource(mut commands: Commands) {
         ),
         Pickable::default(),
     ));
-
-    let state = CambioState {
-        root,
-        free_cards: (0..52).map(CardId).collect(),
-        card_index: HashMap::new(),
-        slot_index: HashMap::new(),
-        player_index: HashMap::new(),
-    };
-
-    commands.insert_resource(state);
 }
 
 pub fn process_single_event(
-    In(msg): In<ServerMessage>,
-    mut state: ResMut<CambioState>,
+    In((root, msg)): In<(Entity, ServerMessage)>,
+    mut states: Query<&mut CambioState>,
     mut players: Query<(&PlayerId, &mut PlayerState)>,
     held: Query<(Entity, &IsHeldBy)>,
     taken_from_slot: Query<&TakenFromSlot>,
@@ -202,11 +186,9 @@ pub fn process_single_event(
     children: Query<&Children>,
     matching_discard: Query<&WasMatchingDiscard>,
     may_give_card_to: Query<&MayGiveCardTo>,
-    mut card_lookup: ResMut<CardValueLookup>,
     mut discard_pile: Single<(Entity, &mut DiscardPile)>,
     mut player_at_turn: Query<(Entity, &mut PlayerAtTurn)>,
     mut commands: Commands,
-    mut message_drain: ResMut<MessageDrain>,
 ) -> bool {
     println!("Processing message: {:?}", msg);
 
@@ -217,6 +199,10 @@ pub fn process_single_event(
             return false;
         };
     }
+
+    let Ok(mut state) = states.get_mut(root) else {
+        reject!("Provided entity is not a cambio root");
+    };
 
     macro_rules! card_id_must_be_top_of_deck {
         ($card_id: expr) => {
@@ -304,7 +290,7 @@ pub fn process_single_event(
 
     macro_rules! card_must_be_known_internally {
         ($card_id: expr) => {{
-            let Some(known_card) = card_lookup.0.get(&$card_id) else {
+            let Some(known_card) = state.card_lookup.0.get(&$card_id) else {
                 reject!("Card {} should have known value.", $card_id.0);
             };
             known_card
@@ -355,7 +341,7 @@ pub fn process_single_event(
                     },
                     Name::new(format!("Player {}", player_id.player_number())),
                     Transform::from_xyz(x, y, 0.0),
-                    ChildOf(state.root),
+                    ChildOf(root),
                 ))
                 .id();
 
@@ -603,7 +589,7 @@ pub fn process_single_event(
                 }
             }
 
-            if let Some(known_card) = card_lookup.0.get(&card_id) {
+            if let Some(known_card) = state.card_lookup.0.get(&card_id) {
                 commands
                     .entity(card_entity)
                     .insert(*known_card)
@@ -646,7 +632,7 @@ pub fn process_single_event(
 
             // We assume that the server will JIT publish the card for the
             // right player before sending this message.
-            if let Some(known_card) = card_lookup.0.get(&card_id) {
+            if let Some(known_card) = state.card_lookup.0.get(&card_id) {
                 commands.entity(card_entity).insert(*known_card);
             }
 
@@ -919,11 +905,11 @@ pub fn process_single_event(
         }
         ServerMessage::FinishedReplayingHistory => {}
         ServerMessage::PublishCardPublically { card_id, value } => {
-            card_lookup.0.insert(card_id, value);
+            state.card_lookup.0.insert(card_id, value);
         }
         ServerMessage::PublishCardForPlayer { card_id, value, .. } => {
             if let Some(value) = value {
-                card_lookup.0.insert(card_id, value);
+                state.card_lookup.0.insert(card_id, value);
             }
         }
     }
@@ -954,7 +940,7 @@ pub fn process_single_event(
     }
 
     // If we're still here then we accepted the message.
-    message_drain.accepted.push_back(msg);
+    state.message_drain.accepted.push_back(msg);
     true
 }
 
@@ -981,6 +967,7 @@ mod tests {
 
     #[derive(Debug)]
     struct TestSetup {
+        root: Entity,
         world: World,
     }
 
@@ -988,11 +975,14 @@ mod tests {
         fn new() -> TestSetup {
             let mut world = World::new();
 
-            world.init_resource::<CardValueLookup>();
-            world.init_resource::<MessageDrain>();
-            world.run_system_cached(setup_game_resource).unwrap();
+            world.run_system_cached(spawn_cambio_root).unwrap();
+            let root = world
+                .query::<(Entity, &CambioState)>()
+                .single(&world)
+                .unwrap()
+                .0;
 
-            TestSetup { world }
+            TestSetup { root, world }
         }
 
         fn with_card_on_discard_pile(mut self, card_id: CardId, value: KnownCard) -> TestSetup {
@@ -1015,7 +1005,8 @@ mod tests {
                 .cards
                 .push_back(card_entity);
             self.world
-                .get_resource_mut::<CambioState>()
+                .query::<&mut CambioState>()
+                .single_mut(&mut self.world)
                 .unwrap()
                 .card_index
                 .insert(card_id, card_entity);
@@ -1054,7 +1045,7 @@ mod tests {
 
         fn run_event_inplace(&mut self, event: &ServerMessage) -> bool {
             self.world
-                .run_system_cached_with(process_single_event, event.clone())
+                .run_system_cached_with(process_single_event, (self.root, event.clone()))
                 .unwrap()
         }
 
@@ -1130,7 +1121,7 @@ mod tests {
         #[values(KnownCard { rank: Rank::Seven, suit: Suit::Hearts }, KnownCard { rank: Rank::Eight, suit: Suit::Hearts })]
         known_card: KnownCard,
     ) {
-        let world = TestSetup::one_player_one_card_start_of_turn()
+        let mut world = TestSetup::one_player_one_card_start_of_turn()
             .with_all_cards_known()
             .with_events(&[
                 ServerMessage::PublishCardForPlayer {
@@ -1152,7 +1143,11 @@ mod tests {
             ])
             .get_world();
 
-        let state = world.get_resource::<CambioState>().unwrap();
+        let state = world
+            .query::<&mut CambioState>()
+            .single_mut(&mut world)
+            .unwrap()
+            .clone();
         let turn_state = world
             .get::<PlayerAtTurn>(state.player_index[&player0()])
             .unwrap();
@@ -1164,7 +1159,7 @@ mod tests {
 
     #[test]
     fn take_from_deck_and_swap_flow() {
-        let world = TestSetup::one_player_one_card_start_of_turn()
+        let mut world = TestSetup::one_player_one_card_start_of_turn()
             .with_all_cards_known()
             .with_events(&[
                 ServerMessage::TakeFreshCardFromDeck {
@@ -1187,7 +1182,11 @@ mod tests {
             ])
             .get_world();
 
-        let state = world.get_resource::<CambioState>().unwrap();
+        let state = world
+            .query::<&mut CambioState>()
+            .single_mut(&mut world)
+            .unwrap()
+            .clone();
         let turn_state = world
             .get::<PlayerAtTurn>(state.player_index[&player0()])
             .unwrap();

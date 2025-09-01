@@ -34,15 +34,6 @@ impl Plugin for ServerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AcceptedHistory>();
 
-        // Make sure the server is all knowing wrt card lookups
-        app.insert_resource(CardValueLookup(
-            Suit::iter()
-                .flat_map(|suit| Rank::iter().map(move |rank| KnownCard { rank, suit }))
-                .enumerate()
-                .map(|(index, card)| (CardId(index as u64), card))
-                .collect(),
-        ));
-
         app.add_systems(
             FixedUpdate,
             (
@@ -53,7 +44,16 @@ impl Plugin for ServerPlugin {
                 .chain(),
         );
 
-        app.add_systems(Startup, (start_signaling_server, start_host_socket).chain());
+        app.add_systems(
+            Startup,
+            (
+                start_signaling_server,
+                start_host_socket,
+                spawn_cambio_root,
+                decide_on_card_values,
+            )
+                .chain(),
+        );
     }
 }
 
@@ -88,16 +88,28 @@ fn start_host_socket(mut commands: Commands) {
     commands.insert_resource(socket);
 }
 
+fn decide_on_card_values(mut state: Single<&mut CambioState>) {
+    // Make sure the server is all knowing wrt card lookups
+    state.card_lookup = CardValueLookup(
+        Suit::iter()
+            .flat_map(|suit| Rank::iter().map(move |rank| KnownCard { rank, suit }))
+            .enumerate()
+            .map(|(index, card)| (CardId(index as u64), card))
+            .collect(),
+    );
+}
+
 fn server_update_system(
     mut commands: Commands,
     mut server: ResMut<MatchboxSocket>,
-    state: Res<CambioState>,
+    state: Single<(Entity, &CambioState)>,
     mut players: Query<(&PlayerId, &mut PlayerState)>,
     mut player_seq: Local<Seq<u8>>,
     mut slot_seq: Local<Seq<u64>>,
     accepted_history: Res<AcceptedHistory>,
     mut entropy: GlobalEntropy<WyRand>,
 ) {
+    let (root, state) = *state;
     let mut to_process: Vec<ServerMessage> = Vec::new();
 
     for (peer_id, peer_state) in server.update_peers() {
@@ -210,7 +222,7 @@ fn server_update_system(
     }
 
     for msg in to_process.drain(..) {
-        commands.run_system_cached_with(process_single_event.pipe(|_: In<bool>| ()), msg);
+        commands.run_system_cached_with(process_single_event.pipe(|_: In<bool>| ()), (root, msg));
     }
 
     for (peer_id, message) in server.channel_mut(UNRELIABLE_CHANNEL).receive() {
@@ -259,17 +271,16 @@ fn server_update_system(
     }
 }
 
-fn recover_from_rejected(mut drain: ResMut<MessageDrain>) {
-    for _ in drain.drain_rejected() {}
+fn recover_from_rejected(mut state: Single<&mut CambioState>) {
+    std::mem::take(&mut state.message_drain.rejected);
 }
 
 fn broadcast_validated_updates(
-    mut bus: ResMut<MessageDrain>,
     mut processed_history: ResMut<AcceptedHistory>,
-    card_lookup: Res<CardValueLookup>,
-    state: Res<CambioState>,
+    mut state: Single<&mut CambioState>,
     mut server: ResMut<MatchboxSocket>,
 ) {
+    let accepted = std::mem::take(&mut state.message_drain.accepted);
     let mut send = |msg: ServerMessage| {
         let peers = server.connected_peers().collect::<Vec<_>>();
         for peer_id in peers {
@@ -283,7 +294,7 @@ fn broadcast_validated_updates(
         processed_history.0.push(msg.clone());
     };
 
-    for msg in bus.drain_accepted() {
+    for msg in accepted {
         // JIT publish the values of cards
         match msg {
             ServerMessage::TakeFreshCardFromDeck { actor, card_id }
@@ -291,13 +302,13 @@ fn broadcast_validated_updates(
                 send(ServerMessage::PublishCardForPlayer {
                     player_id: actor,
                     card_id,
-                    value: Some(card_lookup.0.get(&card_id).unwrap().clone()),
+                    value: Some(state.card_lookup.0.get(&card_id).unwrap().clone()),
                 });
             }
             ServerMessage::DropCardOnDiscardPile { card_id, .. } => {
                 send(ServerMessage::PublishCardPublically {
                     card_id,
-                    value: card_lookup.0.get(&card_id).unwrap().clone(),
+                    value: state.card_lookup.0.get(&card_id).unwrap().clone(),
                 });
             }
             _ => (),

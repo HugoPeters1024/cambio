@@ -12,9 +12,9 @@ mod assets;
 mod cambio;
 mod cards;
 mod client;
+mod menu;
 mod messages;
 mod utils;
-mod menu;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod server;

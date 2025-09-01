@@ -94,7 +94,10 @@ impl Plugin for ClientPlugin {
         app.add_observer(click_slot);
         app.add_observer(click_discard_pile);
 
-        app.add_systems(OnEnter(GamePhase::Playing), (start_socket, setup));
+        app.add_systems(
+            OnEnter(GamePhase::Playing),
+            (start_socket, spawn_cambio_root, setup).chain(),
+        );
         app.add_systems(Update, update_player_idx_text);
         app.add_systems(
             Update,
@@ -112,10 +115,9 @@ fn start_socket(mut commands: Commands) {
     commands.insert_resource(socket);
 }
 
-fn setup(mut commands: Commands, state: Res<CambioState>, assets: Res<GameAssets>) {
+fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: Res<GameAssets>) {
     commands.add_observer(on_player_turn_added);
     commands.add_observer(on_player_turn_removed);
-
 
     commands.spawn((Text::from("You are player: ..."), PlayerIdxText));
 
@@ -123,7 +125,7 @@ fn setup(mut commands: Commands, state: Res<CambioState>, assets: Res<GameAssets
         .spawn((
             Transform::from_xyz(-90.0, 0.0, 0.0),
             InheritedVisibility::default(),
-            ChildOf(state.root),
+            ChildOf(state.0),
             Pickable::default(),
         ))
         .observe(click_deck)
@@ -185,11 +187,12 @@ fn update_player_idx_text(
 
 fn client_sync_players(
     mut commands: Commands,
-    state: Res<CambioState>,
+    state: Single<(Entity, &CambioState)>,
     mut players: Query<&mut PlayerState>,
     me: Query<&MyPlayer>,
     mut client: ResMut<MatchboxSocket>,
 ) {
+    let (root, state) = *state;
     for (peer_id, peer_state) in client.update_peers() {
         match peer_state {
             PeerState::Connected => println!("Connected to peer {peer_id}"),
@@ -202,8 +205,10 @@ fn client_sync_players(
                 .unwrap()
                 .0;
 
-        commands
-            .run_system_cached_with(process_single_event.pipe(|_: In<bool>| ()), server_message);
+        commands.run_system_cached_with(
+            process_single_event.pipe(|_: In<bool>| ()),
+            (root, server_message),
+        );
     }
 
     for (_peer_id, message) in client.channel_mut(UNRELIABLE_CHANNEL).receive() {
@@ -247,7 +252,7 @@ fn set_and_publish_cursor_position(
 }
 
 fn sync_held_by(
-    state: Res<CambioState>,
+    state: Single<&CambioState>,
     mut held: Query<(&mut Transform, &IsHeldBy)>,
     players: Query<&PlayerState>,
 ) {
@@ -403,11 +408,12 @@ fn on_player_turn_removed(
 fn on_message_accepted(
     mut commands: Commands,
     assets: Res<GameAssets>,
-    mut drain: ResMut<MessageDrain>,
     mut catched_up: Local<bool>,
-    state: Res<CambioState>,
+    mut state: Single<&mut CambioState>,
 ) {
-    for msg in drain.drain_accepted() {
+    let accepted = std::mem::take(&mut state.message_drain.accepted);
+
+    for msg in accepted {
         if msg == ServerMessage::FinishedReplayingHistory {
             *catched_up = true;
         }
