@@ -94,14 +94,12 @@ impl Plugin for ClientPlugin {
         app.add_observer(click_slot);
         app.add_observer(click_discard_pile);
 
-        app.add_systems(OnEnter(GamePhase::Playing), setup);
+        app.add_systems(OnEnter(GamePhase::Playing), (start_socket, setup));
         app.add_systems(Update, update_player_idx_text);
         app.add_systems(
             Update,
             on_message_accepted.run_if(in_state(GamePhase::Playing)),
         );
-
-        app.add_systems(Startup, start_socket);
     }
 }
 
@@ -118,15 +116,6 @@ fn setup(mut commands: Commands, state: Res<CambioState>, assets: Res<GameAssets
     commands.add_observer(on_player_turn_added);
     commands.add_observer(on_player_turn_removed);
 
-    commands.spawn((
-        Camera2d,
-        Projection::Orthographic(OrthographicProjection {
-            scaling_mode: bevy::render::camera::ScalingMode::FixedVertical {
-                viewport_height: 480.0,
-            },
-            ..OrthographicProjection::default_2d()
-        }),
-    ));
 
     commands.spawn((Text::from("You are player: ..."), PlayerIdxText));
 

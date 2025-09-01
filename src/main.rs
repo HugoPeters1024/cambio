@@ -14,6 +14,7 @@ mod cards;
 mod client;
 mod messages;
 mod utils;
+mod menu;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod server;
@@ -90,6 +91,7 @@ fn main() {
         app.add_plugins(bevy_tweening::TweeningPlugin);
         app.add_plugins(CambioPlugin);
         app.add_plugins(ClientPlugin);
+        app.add_plugins(crate::menu::MenuPlugin);
 
         app.add_plugins((GameAssetPlugin, CardPlugin));
 

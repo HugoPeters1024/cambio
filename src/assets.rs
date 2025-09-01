@@ -35,6 +35,7 @@ pub struct GameAssets {
 pub enum GamePhase {
     #[default]
     AssetLoading,
+    Menu,
     Playing,
 }
 
@@ -44,7 +45,7 @@ impl Plugin for GameAssetPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<GamePhase>().add_loading_state(
             LoadingState::new(GamePhase::AssetLoading)
-                .continue_to_state(GamePhase::Playing)
+                .continue_to_state(GamePhase::Menu)
                 .load_collection::<GameAssets>(),
         );
     }
