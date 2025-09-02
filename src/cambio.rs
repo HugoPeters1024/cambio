@@ -54,6 +54,9 @@ pub struct UnrevealKnownCardTimer(Timer);
 #[derive(Component)]
 pub struct MyPlayer;
 
+#[derive(Component)]
+pub struct HasImmunity;
+
 /// Special out of turn buff for a player
 /// indicating that they may dump a card
 /// to another player.
@@ -106,6 +109,7 @@ pub struct CambioState {
     pub message_drain: MessageDrain,
     pub card_lookup: CardValueLookup,
     pub discard_pile_entity: Entity,
+    pub game_finished: bool,
 }
 
 #[derive(Default, Clone)]
@@ -143,10 +147,7 @@ fn handle_unreveal_timer(
 
 pub fn spawn_cambio_root(mut commands: Commands) {
     let discard_pile = commands
-        .spawn((
-            Name::new("Discard Pile"),
-            DiscardPile,
-        ))
+        .spawn((Name::new("Discard Pile"), DiscardPile))
         .id();
 
     let root = commands
@@ -164,6 +165,7 @@ pub fn spawn_cambio_root(mut commands: Commands) {
                 message_drain: MessageDrain::default(),
                 card_lookup: CardValueLookup::default(),
                 discard_pile_entity: discard_pile,
+                game_finished: false,
             },
         ))
         .id();
@@ -178,6 +180,7 @@ pub fn process_single_event(
     held: Query<(Entity, &IsHeldBy)>,
     taken_from_slot: Query<&TakenFromSlot>,
     card_ids: Query<&CardId>,
+    slot_ids: Query<&SlotId>,
     known_cards: Query<&KnownCard>,
     children: Query<&Children>,
     matching_discard: Query<&WasMatchingDiscard>,
@@ -198,6 +201,10 @@ pub fn process_single_event(
     let Ok(mut state) = states.get_mut(root) else {
         reject!("Provided entity is not a cambio root");
     };
+
+    if state.game_finished {
+        reject!("Game is finished");
+    }
 
     macro_rules! card_id_must_be_top_of_deck {
         ($card_id: expr) => {
@@ -941,30 +948,38 @@ pub fn process_single_event(
                 .discard_pile
                 .retain(|card_entity| cards_in_discard_pile.contains(card_entity));
         }
-    }
+        ServerMessage::SlapTable { actor } => {
+            let player_entity = player_must_exists!(actor);
+            let mut turn_state = must_have_turn!(actor);
+            if *turn_state != PlayerAtTurn::Start {
+                reject!("Can only slap the table at the start of a turn");
+            }
 
-    // If we're still here then we accepted the message.
+            *turn_state = PlayerAtTurn::Finished;
+            commands.entity(player_entity).insert(HasImmunity);
+        }
+        ServerMessage::GameFinished { all_cards } => {
+            for (card_id, known_card) in all_cards.iter() {
+                card_must_exists!(card_id);
+                state.card_lookup.0.insert(*card_id, *known_card);
+            }
 
-    // Post check: If we're at the end of the turn, move to the next player
-    for (current_player_at_turn, turn_state) in player_at_turn.iter() {
-        if *turn_state == PlayerAtTurn::Finished {
-            println!("Moving to next player");
-            let mut all_players = state.player_index.iter().collect::<Vec<_>>();
-            all_players.sort_by_key(|(p, _)| p.player_number());
+            for (_, player_state) in players.iter() {
+                for slot_entity in player_state.slots.iter() {
+                    children.iter_descendants(*slot_entity).for_each(|entity| {
+                        if let Ok(card_id) = card_ids.get(entity) {
+                            if let Some(known_value) = state.card_lookup.0.get(card_id) {
+                                commands.entity(entity).insert(*known_value);
+                            }
+                        }
+                    });
+                }
+            }
 
-            let current_player_idx = all_players
-                .iter()
-                .position(|(_, pe)| **pe == current_player_at_turn)
-                .unwrap();
-
-            let next_player_idx = (current_player_idx + 1) % all_players.len();
-
-            let &next_player = all_players[next_player_idx].1;
-
-            commands
-                .entity(current_player_at_turn)
-                .remove::<PlayerAtTurn>();
-            commands.entity(next_player).insert(PlayerAtTurn::Start);
+            for (card_id, known_card) in all_cards.iter() {
+                let card_entity = card_must_exists!(card_id);
+                commands.entity(card_entity).insert(*known_card);
+            }
         }
     }
 
@@ -1215,7 +1230,7 @@ mod tests {
             .get::<PlayerAtTurn>(state.player_index[&player0()])
             .unwrap();
 
-        assert_eq!(*turn_state, PlayerAtTurn::Start);
+        assert_eq!(*turn_state, PlayerAtTurn::Finished);
     }
 
     #[test]
@@ -1292,38 +1307,14 @@ mod tests {
                 offset_y: 0.0,
                 rotation: 0.0,
             });
+            env.accepts(&ServerMessage::PlayerAtTurn {
+                player_id: player0(),
+            });
         }
 
         env.rejects(&ServerMessage::TakeFreshCardFromDeck {
             actor: player0(),
             card_id: CardId(52),
         });
-    }
-
-    #[test]
-    fn finishing_turn_will_trigger_next_player() {
-        let mut world = TestSetup::two_players_one_cards()
-            .with_all_cards_known()
-            .with_events(&[
-                ServerMessage::TakeFreshCardFromDeck {
-                    actor: player0(),
-                    card_id: CardId(2),
-                },
-                ServerMessage::DropCardOnDiscardPile {
-                    actor: player0(),
-                    card_id: CardId(2),
-                    offset_x: 0.0,
-                    offset_y: 0.0,
-                    rotation: 0.0,
-                },
-            ])
-            .get_world();
-
-        let players_at_turn = world
-            .query::<(&PlayerId, &PlayerAtTurn)>()
-            .iter(&world)
-            .map(|x| *x.0)
-            .collect::<Vec<_>>();
-        assert_eq!(players_at_turn, vec![player1()]);
     }
 }

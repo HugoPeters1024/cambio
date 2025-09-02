@@ -21,6 +21,9 @@ struct PlayerTurnIcon;
 #[derive(Component)]
 struct PlayerIdxText;
 
+#[derive(Component)]
+struct SlapTableButton;
+
 pub trait ClientExt {
     fn send_claim(&mut self, claim: ClientClaim);
 
@@ -117,7 +120,7 @@ impl Plugin for ClientPlugin {
             OnEnter(GamePhase::Playing),
             (start_socket, spawn_cambio_root, setup).chain(),
         );
-        app.add_systems(Update, update_player_idx_text);
+        app.add_systems(Update, (update_player_idx_text, handle_slap_table));
         app.add_systems(
             Update,
             on_message_accepted.run_if(in_state(GamePhase::Playing)),
@@ -162,6 +165,39 @@ fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: 
             ChildOf(deck_of_cards),
         ));
     }
+
+    commands.spawn((
+        Node {
+            width: Val::Px(130.0),
+            height: Val::Px(50.0),
+            padding: UiRect::vertical(Val::Px(100.0)),
+            ..default()
+        },
+        children![(
+            Node {
+                width: Val::Px(130.0),
+                height: Val::Px(50.0),
+                justify_content: JustifyContent::Center,
+                border: UiRect::all(Val::Px(5.0)),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            Button,
+            SlapTableButton,
+            BorderColor(Color::BLACK),
+            BorderRadius::MAX,
+            BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
+            children![(
+                Text::new("Slap Table"),
+                TextFont {
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                TextShadow::default(),
+            )]
+        )],
+    ));
 }
 
 fn update_player_idx_text(
@@ -376,6 +412,22 @@ fn click_slot(
             });
             trigger.propagate(false);
         }
+    }
+}
+
+fn handle_slap_table(
+    q: Single<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<SlapTableButton>),
+    >,
+    mut client: ResMut<MatchboxSocket>,
+) {
+    let (interaction, mut bg_color) = q.into_inner();
+
+    match interaction {
+        Interaction::Pressed => client.send_claim(ClientClaim::SlapTable),
+        Interaction::Hovered => bg_color.0 = Color::srgb(0.2, 0.2, 0.2),
+        Interaction::None => bg_color.0 = Color::srgb(0.1, 0.1, 0.1),
     }
 }
 

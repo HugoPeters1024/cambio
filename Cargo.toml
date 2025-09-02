@@ -39,7 +39,7 @@ dev = [
 # All of Bevy's default features exept for the audio related ones (bevy_audio, vorbis), since they clash with bevy_kira_audio
 #   and android_shared_stdcxx/android-game-activity, since those are covered in `mobile`
 [dependencies]
-bevy = {version = "0.16.1", features = ["dynamic_linking", "jpeg", "serialize"]}
+bevy = {version = "0.16.1", features = ["jpeg", "serialize"]}
 bevy_asset_loader = { version = "0.23.0", features = ["2d"] }
 bevy_matchbox = { version = "0.12.0", features = ["signaling"] }
 bincode = { version = "2.0.1", features = ["serde"] }

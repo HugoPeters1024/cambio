@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{platform::collections::HashMap, prelude::*};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -35,6 +35,7 @@ pub enum ClientClaim {
         slot_card_id: CardId,
         held_card_id: CardId,
     },
+    SlapTable,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -110,6 +111,12 @@ pub enum ServerMessage {
     },
     ShuffleDiscardPile {
         card_ids: Vec<CardId>,
+    },
+    SlapTable {
+        actor: PlayerId,
+    },
+    GameFinished {
+        all_cards: HashMap<CardId, KnownCard>,
     },
 }
 

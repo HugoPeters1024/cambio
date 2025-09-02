@@ -280,6 +280,7 @@ fn server_update_system(
                 slot_card_id,
                 held_card_id,
             },
+            ClientClaim::SlapTable => ServerMessage::SlapTable { actor: *claimer_id },
         };
 
         trigger_event(&mut commands, server_message, &root);
@@ -331,8 +332,14 @@ fn server_update_system(
     }
 }
 
-fn trigger_server_events(root: In<Entity>, mut commands: Commands, q: Query<&CambioState>) {
-    let state = q.get(*root).unwrap();
+fn trigger_server_events(
+    root: In<Entity>,
+    mut commands: Commands,
+    states: Query<&CambioState>,
+    player_at_turn: Query<(Entity, &PlayerAtTurn)>,
+    immunity: Query<&HasImmunity>,
+) {
+    let state = states.get(*root).unwrap();
     if state.free_cards.is_empty() {
         commands.run_system_cached_with(
             process_single_event.pipe(|_: In<bool>| ()),
@@ -343,6 +350,42 @@ fn trigger_server_events(root: In<Entity>, mut commands: Commands, q: Query<&Cam
                 },
             ),
         );
+    }
+
+    for (current_player_at_turn, turn_state) in player_at_turn.iter() {
+        if *turn_state == PlayerAtTurn::Finished {
+            println!("Moving to next player");
+            let mut all_players = state.player_index.iter().collect::<Vec<_>>();
+            all_players.sort_by_key(|(p, _)| p.player_number());
+
+            let current_player_idx = all_players
+                .iter()
+                .position(|(_, pe)| **pe == current_player_at_turn)
+                .unwrap();
+
+            let next_player_idx = (current_player_idx + 1) % all_players.len();
+
+            let (next_player_id, next_player) = all_players[next_player_idx];
+
+            let event = if immunity.contains(*next_player) {
+                ServerMessage::GameFinished {
+                    all_cards: state
+                        .card_index
+                        .keys()
+                        .map(|card_id| (*card_id, *state.card_lookup.0.get(card_id).unwrap()))
+                        .collect(),
+                }
+            } else {
+                ServerMessage::PlayerAtTurn {
+                    player_id: *next_player_id,
+                }
+            };
+
+            commands.run_system_cached_with(
+                process_single_event.pipe(|_: In<bool>| ()),
+                (*root, event),
+            );
+        }
     }
 }
 

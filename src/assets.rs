@@ -4,8 +4,8 @@ use bevy_asset_loader::prelude::*;
 pub const CARD_WIDTH: f32 = 256.0;
 pub const CARD_HEIGHT: f32 = 356.0;
 
-pub const DESIRED_CARD_WIDTH: f32 = CARD_WIDTH / 5.0;
-pub const DESIRED_CARD_HEIGHT: f32 = CARD_HEIGHT / 5.0;
+pub const DESIRED_CARD_WIDTH: f32 = CARD_WIDTH / 6.0;
+pub const DESIRED_CARD_HEIGHT: f32 = CARD_HEIGHT / 6.0;
 
 #[derive(AssetCollection, Resource)]
 pub struct GameAssets {
