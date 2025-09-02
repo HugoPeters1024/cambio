@@ -222,7 +222,10 @@ fn button_system(
                 }
                 .to_string();
 
-                commands.insert_resource(ConnectionSettings { server_url });
+                commands.insert_resource(ConnectionSettings {
+                    server_url,
+                    username,
+                });
                 next_state.set(GamePhase::Playing);
             }
             Interaction::Hovered => {

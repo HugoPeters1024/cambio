@@ -95,6 +95,7 @@ pub struct DiscardPile;
 #[derive(Component)]
 #[require(Transform, InheritedVisibility)]
 pub struct PlayerState {
+    pub username: String,
     pub last_mouse_pos_world: Vec2,
     pub slots: HashSet<Entity>,
 }
@@ -180,11 +181,11 @@ pub fn process_single_event(
     held: Query<(Entity, &IsHeldBy)>,
     taken_from_slot: Query<&TakenFromSlot>,
     card_ids: Query<&CardId>,
-    slot_ids: Query<&SlotId>,
     known_cards: Query<&KnownCard>,
     children: Query<&Children>,
     matching_discard: Query<&WasMatchingDiscard>,
     may_give_card_to: Query<&MayGiveCardTo>,
+    immunity: Query<&HasImmunity>,
     mut player_at_turn: Query<(Entity, &mut PlayerAtTurn)>,
     mut commands: Commands,
 ) -> bool {
@@ -192,7 +193,6 @@ pub fn process_single_event(
 
     macro_rules! reject {
         ($($arg:tt)*) => {
-            println!($($arg)*);
             warn!($($arg)*);
             return false;
         };
@@ -323,6 +323,16 @@ pub fn process_single_event(
         }};
     }
 
+    macro_rules! slot_owner_must_not_be_immune {
+        ($slot_id: expr) => {{
+            let player_id = slot_owner!($slot_id);
+            let player_entity = player_must_exists!(player_id);
+            if immunity.contains(player_entity) {
+                reject!("Player {} is immune.", player_id.player_number());
+            }
+        }};
+    }
+
     match &msg {
         ServerMessage::PlayerConnected { player_id } => {
             if state.player_index.contains_key(player_id) {
@@ -339,6 +349,7 @@ pub fn process_single_event(
                     PlayerState {
                         last_mouse_pos_world: Vec2::ZERO,
                         slots: HashSet::new(),
+                        username: format!("Player {}", player_id.player_number()),
                     },
                     Name::new(format!("Player {}", player_id.player_number())),
                     Transform::from_xyz(x, y, 0.0),
@@ -348,9 +359,15 @@ pub fn process_single_event(
 
             state.player_index.insert(*player_id, player_entity);
         }
+        ServerMessage::SetUsername { actor, username } => {
+            let player_entity = player_must_exists!(actor);
+            let Ok(mut player) = players.get_mut(player_entity) else {
+                reject!("Player index corrupted");
+            };
+            player.1.username = username.clone();
+        }
         ServerMessage::PlayerDisconnected { player_id } => {
-            let player_entity = *state.player_index.get(player_id).unwrap();
-            commands.entity(player_entity).despawn();
+            let _ = player_must_exists!(player_id);
             state.player_index.remove(player_id);
         }
         ServerMessage::ReceiveFreshSlot { actor, slot_id } => {
@@ -428,6 +445,11 @@ pub fn process_single_event(
             slot_must_have_card!(slot_id, card_id);
             player_must_not_be_holding_a_card!(actor);
 
+            let slot_owner = slot_owner!(slot_id);
+            if slot_owner != actor {
+                slot_owner_must_not_be_immune!(slot_id);
+            }
+
             if held.contains(card_entity) {
                 reject!("Card is both attached to a slot and held?!");
             }
@@ -482,6 +504,9 @@ pub fn process_single_event(
                             player_to_screw.player_number()
                         );
                     }
+
+                    // 3. The owner of the slot may not be immune
+                    slot_owner_must_not_be_immune!(slot_id);
 
                     // 3. Then we can complete the action
                     commands.entity(player_entity).remove::<MayGiveCardTo>();
@@ -547,6 +572,7 @@ pub fn process_single_event(
             let player_entity = player_must_exists!(actor);
             let card_entity = card_must_exists!(card_id);
             slot_must_have_card!(slot_id, card_id);
+            slot_owner_must_not_be_immune!(slot_id);
 
             if *check_turn {
                 let mut turn_state = must_have_turn!(actor);
@@ -596,8 +622,6 @@ pub fn process_single_event(
                 commands
                     .entity(card_entity)
                     .insert(*known_card)
-                    // TODO: this unreveal shouldn't trigger if the card
-                    // was e.g. put on the discard pile in the meantime
                     .insert(UnrevealKnownCardTimer(Timer::from_seconds(
                         3.0,
                         TimerMode::Once,
@@ -709,8 +733,19 @@ pub fn process_single_event(
                         if known_value.rank == Rank::Seven || known_value.rank == Rank::Eight {
                             *turn_state = PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOwnCard);
                         } else if known_value.rank == Rank::Nine || known_value.rank == Rank::Ten {
-                            *turn_state =
-                                PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOtherPlayersCard);
+                            // Only if there is another elligble player to look at
+                            if state
+                                .player_index
+                                .iter()
+                                .filter(|(pid, pe)| *pid != actor && !immunity.contains(**pe))
+                                .count()
+                                == 0
+                            {
+                                *turn_state = PlayerAtTurn::Finished;
+                            } else {
+                                *turn_state =
+                                    PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOtherPlayersCard);
+                            }
                         } else if known_value.rank == Rank::Jack || known_value.rank == Rank::Queen
                         {
                             *turn_state = PlayerAtTurn::HasBuff(TurnBuff::MaySwapTwoCards {
@@ -750,6 +785,7 @@ pub fn process_single_event(
                 .entity(card_entity)
                 .remove::<IsHeldBy>()
                 .remove::<TakenFromSlot>()
+                .remove::<UnrevealKnownCardTimer>()
                 .insert(*known_value)
                 .insert(ChildOf(state.discard_pile_entity))
                 .insert(transform);
@@ -810,6 +846,7 @@ pub fn process_single_event(
             let held_card_entity = card_must_exists!(held_card_id);
             player_must_be_holding_card!(actor, held_card_id);
             slot_must_have_card!(slot_id, slot_card_id);
+            slot_owner_must_not_be_immune!(slot_id);
 
             let slot_card_entity = card_must_exists!(slot_card_id);
 
@@ -949,6 +986,10 @@ pub fn process_single_event(
                 .retain(|card_entity| cards_in_discard_pile.contains(card_entity));
         }
         ServerMessage::SlapTable { actor } => {
+            if !immunity.is_empty() {
+                reject!("Only one player can slap the table");
+            }
+
             let player_entity = player_must_exists!(actor);
             let mut turn_state = must_have_turn!(actor);
             if *turn_state != PlayerAtTurn::Start {
@@ -958,7 +999,7 @@ pub fn process_single_event(
             *turn_state = PlayerAtTurn::Finished;
             commands.entity(player_entity).insert(HasImmunity);
         }
-        ServerMessage::GameFinished { all_cards } => {
+        ServerMessage::GameFinished { all_cards, .. } => {
             for (card_id, known_card) in all_cards.iter() {
                 card_must_exists!(card_id);
                 state.card_lookup.0.insert(*card_id, *known_card);
@@ -969,17 +1010,26 @@ pub fn process_single_event(
                     children.iter_descendants(*slot_entity).for_each(|entity| {
                         if let Ok(card_id) = card_ids.get(entity) {
                             if let Some(known_value) = state.card_lookup.0.get(card_id) {
-                                commands.entity(entity).insert(*known_value);
+                                commands
+                                    .entity(entity)
+                                    .remove::<UnrevealKnownCardTimer>()
+                                    .insert(*known_value);
                             }
                         }
                     });
                 }
             }
 
+            for (entity, _) in player_at_turn.iter() {
+                commands.entity(entity).remove::<PlayerAtTurn>();
+            }
+
             for (card_id, known_card) in all_cards.iter() {
                 let card_entity = card_must_exists!(card_id);
                 commands.entity(card_entity).insert(*known_card);
             }
+
+            state.game_finished = true;
         }
     }
 

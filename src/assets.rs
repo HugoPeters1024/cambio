@@ -21,6 +21,12 @@ pub struct GameAssets {
     #[asset(path = "arrow_down.png")]
     pub arrow_down_sprite: Handle<Image>,
 
+    #[asset(path = "slap_table.png")]
+    pub slap_table_sprite: Handle<Image>,
+
+    #[asset(path = "disconnected.png")]
+    pub disconnected_sprite: Handle<Image>,
+
     #[asset(path = "card_sweep.ogg")]
     pub card_sweep: Handle<AudioSource>,
 
@@ -32,6 +38,12 @@ pub struct GameAssets {
 
     #[asset(path = "vo_shuffle.ogg")]
     pub vo_shuffle: Handle<AudioSource>,
+
+    #[asset(path = "vo_finalscores.ogg")]
+    pub vo_finalscores: Handle<AudioSource>,
+
+    #[asset(path = "ready_1.ogg")]
+    pub slap_table_sound: Handle<AudioSource>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Default, States)]

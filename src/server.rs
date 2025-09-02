@@ -1,5 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy_matchbox::{matchbox_signaling::SignalingServer, prelude::*};
 use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
@@ -281,6 +282,10 @@ fn server_update_system(
                 held_card_id,
             },
             ClientClaim::SlapTable => ServerMessage::SlapTable { actor: *claimer_id },
+            ClientClaim::SetUsername { username } => ServerMessage::SetUsername {
+                actor: *claimer_id,
+                username,
+            },
         };
 
         trigger_event(&mut commands, server_message, &root);
@@ -337,11 +342,15 @@ fn trigger_server_events(
     mut commands: Commands,
     states: Query<&CambioState>,
     player_at_turn: Query<(Entity, &PlayerAtTurn)>,
+    players: Query<&PlayerState>,
+    card_ids: Query<&CardId>,
+    children: Query<&Children>,
     immunity: Query<&HasImmunity>,
 ) {
     let state = states.get(*root).unwrap();
     if state.free_cards.is_empty() {
         commands.run_system_cached_with(
+            // TODO: actually update the card value lookup
             process_single_event.pipe(|_: In<bool>| ()),
             (
                 *root,
@@ -368,12 +377,29 @@ fn trigger_server_events(
             let (next_player_id, next_player) = all_players[next_player_idx];
 
             let event = if immunity.contains(*next_player) {
+                let mut to_reveal = HashMap::new();
+                let mut final_score = HashMap::new();
+
+                for (player_id, player_entity) in state.player_index.iter() {
+                    let player_state = players.get(*player_entity).unwrap();
+                    let mut score: i32 = 0;
+                    for slot_entity in player_state.slots.iter() {
+                        if let Some(card_id) = children
+                            .iter_descendants(*slot_entity)
+                            .filter_map(|c| card_ids.get(c).ok())
+                            .next()
+                        {
+                            let known_card = state.card_lookup.0.get(card_id).unwrap();
+                            to_reveal.insert(*card_id, *known_card);
+                            score += known_card.penalty_score();
+                        }
+                    }
+                    final_score.insert(*player_id, score);
+                }
+
                 ServerMessage::GameFinished {
-                    all_cards: state
-                        .card_index
-                        .keys()
-                        .map(|card_id| (*card_id, *state.card_lookup.0.get(card_id).unwrap()))
-                        .collect(),
+                    all_cards: to_reveal,
+                    final_scores: final_score,
                 }
             } else {
                 ServerMessage::PlayerAtTurn {

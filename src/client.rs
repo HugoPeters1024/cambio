@@ -13,13 +13,17 @@ use crate::messages::*;
 #[derive(Resource)]
 pub struct ConnectionSettings {
     pub server_url: String,
+    pub username: String,
 }
 
 #[derive(Component)]
 struct PlayerTurnIcon;
 
 #[derive(Component)]
-struct PlayerIdxText;
+struct PlayerHUDText;
+
+#[derive(Component)]
+struct PlayerNameText;
 
 #[derive(Component)]
 struct SlapTableButton;
@@ -75,17 +79,24 @@ impl Plugin for ClientPlugin {
         fn on_player_spawn(
             trigger: Trigger<OnAdd, PlayerId>,
             player_ids: Query<&PlayerId>,
-            mut transport: ResMut<MatchboxSocket>,
             mut commands: Commands,
+            mut client: ResMut<MatchboxSocket>,
+            connection_settings: Res<ConnectionSettings>,
         ) {
             let player_id = *player_ids.get(trigger.target()).unwrap();
 
-            // Mark this player as the local player
-            if player_id.peer_id == transport.id().unwrap() {
+            // Mark this player as the local player and send
+            // a claim to update our username
+            if player_id.peer_id == client.id().unwrap() {
                 commands.entity(trigger.target()).insert(MyPlayer);
+
+                client.send_claim(ClientClaim::SetUsername {
+                    username: connection_settings.username.clone(),
+                });
             }
 
             commands.entity(trigger.target()).with_child((
+                PlayerNameText,
                 Text2d::new(format!("Player {}", player_id.player_number())),
                 TextFont::from_font_size(14.0),
                 Transform::from_xyz(
@@ -120,10 +131,13 @@ impl Plugin for ClientPlugin {
             OnEnter(GamePhase::Playing),
             (start_socket, spawn_cambio_root, setup).chain(),
         );
-        app.add_systems(Update, (update_player_idx_text, handle_slap_table));
+        app.add_systems(Update, update_player_turn_state);
         app.add_systems(
             Update,
-            on_message_accepted.run_if(in_state(GamePhase::Playing)),
+            (
+                on_message_accepted.run_if(in_state(GamePhase::Playing)),
+                on_player_state_change,
+            ),
         );
     }
 }
@@ -141,7 +155,7 @@ fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: 
     commands.add_observer(on_player_turn_added);
     commands.add_observer(on_player_turn_removed);
 
-    commands.spawn((Text::from("You are player: ..."), PlayerIdxText));
+    commands.spawn((Text::from("You are player: ..."), PlayerHUDText));
 
     let deck_of_cards = commands
         .spawn((
@@ -166,46 +180,35 @@ fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: 
         ));
     }
 
-    commands.spawn((
-        Node {
-            width: Val::Px(130.0),
-            height: Val::Px(50.0),
-            padding: UiRect::vertical(Val::Px(100.0)),
-            ..default()
-        },
-        children![(
-            Node {
-                width: Val::Px(130.0),
-                height: Val::Px(50.0),
-                justify_content: JustifyContent::Center,
-                border: UiRect::all(Val::Px(5.0)),
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            Button,
+    commands
+        .spawn((
+            ChildOf(state.0),
             SlapTableButton,
-            BorderColor(Color::BLACK),
-            BorderRadius::MAX,
-            BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
-            children![(
-                Text::new("Slap Table"),
-                TextFont {
-                    font_size: 16.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.9, 0.9, 0.9)),
-                TextShadow::default(),
-            )]
-        )],
-    ));
+            Sprite::from_image(assets.slap_table_sprite.clone()),
+            Pickable::default(),
+            Transform::from_xyz(90.0, 0.0, 0.0).with_scale(Vec3::splat(0.05)),
+        ))
+        .observe(
+            |_: Trigger<Pointer<Click>>, mut client: ResMut<MatchboxSocket>| {
+                client.send_claim(ClientClaim::SlapTable);
+            },
+        );
 }
 
-fn update_player_idx_text(
+fn update_player_turn_state(
+    mut commands: Commands,
     me: Single<&PlayerId, With<MyPlayer>>,
     turn_state: Query<&PlayerAtTurn, With<MyPlayer>>,
     extra: Query<&MayGiveCardTo, With<MyPlayer>>,
-    mut text: Single<&mut Text, With<PlayerIdxText>>,
+    slap_table_button: Single<Entity, With<SlapTableButton>>,
+    immunity: Query<&HasImmunity>,
+    mut hud_text: Single<&mut Text, With<PlayerHUDText>>,
 ) {
+    // hidden by default
+    commands
+        .entity(*slap_table_button)
+        .insert(Visibility::Hidden);
+
     let mut turn_description = "".to_string();
     if let Some(player_at_turn) = turn_state.iter().next() {
         turn_description = match player_at_turn {
@@ -223,7 +226,14 @@ fn update_player_idx_text(
                 }
             },
         }
-        .to_string()
+        .to_string();
+
+        // Revealed if it's at the start of your turn and nobody's done it yet
+        if *player_at_turn == PlayerAtTurn::Start && immunity.is_empty() {
+            commands
+                .entity(*slap_table_button)
+                .insert(Visibility::Inherited);
+        }
     };
 
     if let Some(may_give_card_to) = extra.iter().next() {
@@ -233,7 +243,7 @@ fn update_player_idx_text(
         );
     }
 
-    text.0 = format!(
+    hud_text.0 = format!(
         "You are player: {} ({})",
         me.player_number(),
         turn_description
@@ -415,22 +425,6 @@ fn click_slot(
     }
 }
 
-fn handle_slap_table(
-    q: Single<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<SlapTableButton>),
-    >,
-    mut client: ResMut<MatchboxSocket>,
-) {
-    let (interaction, mut bg_color) = q.into_inner();
-
-    match interaction {
-        Interaction::Pressed => client.send_claim(ClientClaim::SlapTable),
-        Interaction::Hovered => bg_color.0 = Color::srgb(0.2, 0.2, 0.2),
-        Interaction::None => bg_color.0 = Color::srgb(0.1, 0.1, 0.1),
-    }
-}
-
 fn on_player_turn_added(
     trigger: Trigger<OnAdd, PlayerAtTurn>,
     mut commands: Commands,
@@ -481,11 +475,31 @@ fn on_player_turn_removed(
     }
 }
 
+fn on_player_state_change(
+    q: Query<(Entity, &PlayerId, &PlayerState), Changed<PlayerState>>,
+    mut text: Query<&mut Text2d, With<PlayerNameText>>,
+    children: Query<&Children>,
+) {
+    for (entity, player_id, player_state) in q.iter() {
+        for child in children.iter_descendants(entity) {
+            if let Ok(mut text) = text.get_mut(child) {
+                text.0 = format!(
+                    "{} ({})",
+                    player_state.username.clone(),
+                    player_id.player_number()
+                );
+            }
+        }
+    }
+}
+
 fn on_message_accepted(
     mut commands: Commands,
     assets: Res<GameAssets>,
-    mut catched_up: Local<bool>,
+    player_ids: Query<(Entity, &PlayerId)>,
+    players: Query<&PlayerState>,
     mut state: Single<&mut CambioState>,
+    mut catched_up: Local<bool>,
 ) {
     let accepted = std::mem::take(&mut state.message_drain.accepted);
 
@@ -493,13 +507,10 @@ fn on_message_accepted(
         if msg == ServerMessage::FinishedReplayingHistory {
             *catched_up = true;
         }
-        if !*catched_up {
-            continue;
-        }
 
         match msg {
             ServerMessage::ReceiveFreshCardFromDeck { card_id, .. } => {
-                if let Some(card_entity) = state.card_index.get(&card_id) {
+                if *catched_up && let Some(card_entity) = state.card_index.get(&card_id) {
                     commands
                         .entity(*card_entity)
                         .insert(Animator::new(Tween::new(
@@ -513,43 +524,118 @@ fn on_message_accepted(
                 }
             }
             ServerMessage::TakeFreshCardFromDeck { .. } => {
-                commands.spawn((
-                    AudioPlayer::new(assets.card_sweep.clone()),
-                    PlaybackSettings::DESPAWN,
-                ));
-            }
-            ServerMessage::SwapHeldCardWithSlotCard { slot_card_id, .. } => {
-                commands.spawn((
-                    AudioPlayer::new(assets.card_swap.clone()),
-                    PlaybackSettings::DESPAWN,
-                ));
-
-                if let Some(card_entity) = state.card_index.get(&slot_card_id) {
-                    commands.entity(*card_entity).insert(Animator::new(
-                        Tween::new(
-                            EaseFunction::Linear,
-                            Duration::from_millis(50),
-                            TransformRotateZLens {
-                                start: -std::f32::consts::PI / 12.0,
-                                end: std::f32::consts::PI / 12.0,
-                            },
-                        )
-                        .with_repeat_strategy(RepeatStrategy::MirroredRepeat)
-                        .with_repeat_count(Duration::from_millis(175)),
+                if *catched_up {
+                    commands.spawn((
+                        AudioPlayer::new(assets.card_sweep.clone()),
+                        PlaybackSettings::DESPAWN,
                     ));
                 }
             }
+            ServerMessage::SwapHeldCardWithSlotCard { slot_card_id, .. } => {
+                if *catched_up {
+                    commands.spawn((
+                        AudioPlayer::new(assets.card_swap.clone()),
+                        PlaybackSettings::DESPAWN,
+                    ));
+
+                    if let Some(card_entity) = state.card_index.get(&slot_card_id) {
+                        commands.entity(*card_entity).insert(Animator::new(
+                            Tween::new(
+                                EaseFunction::Linear,
+                                Duration::from_millis(50),
+                                TransformRotateZLens {
+                                    start: -std::f32::consts::PI / 12.0,
+                                    end: std::f32::consts::PI / 12.0,
+                                },
+                            )
+                            .with_repeat_strategy(RepeatStrategy::MirroredRepeat)
+                            .with_repeat_count(Duration::from_millis(175)),
+                        ));
+                    }
+                }
+            }
             ServerMessage::DropCardOnSlot { .. } | ServerMessage::DropCardOnDiscardPile { .. } => {
-                commands.spawn((
-                    AudioPlayer::new(assets.card_laydown.clone()),
-                    PlaybackSettings::DESPAWN,
-                ));
+                if *catched_up {
+                    commands.spawn((
+                        AudioPlayer::new(assets.card_laydown.clone()),
+                        PlaybackSettings::DESPAWN,
+                    ));
+                }
             }
             ServerMessage::ShuffleDiscardPile { .. } => {
-                commands.spawn((
-                    AudioPlayer::new(assets.vo_shuffle.clone()),
-                    PlaybackSettings::DESPAWN,
+                if *catched_up {
+                    commands.spawn((
+                        AudioPlayer::new(assets.vo_shuffle.clone()),
+                        PlaybackSettings::DESPAWN,
+                    ));
+                }
+            }
+            ServerMessage::SlapTable { .. } => {
+                if *catched_up {
+                    commands.spawn((
+                        AudioPlayer::new(assets.slap_table_sound.clone()),
+                        PlaybackSettings::DESPAWN,
+                    ));
+                }
+            }
+            ServerMessage::PlayerDisconnected { player_id, .. } => {
+                // the player is already not in the state anymore
+                let player_entity = player_ids
+                    .iter()
+                    .find(|(_, id)| **id == player_id)
+                    .unwrap()
+                    .0;
+                commands.entity(player_entity).with_child((
+                    Sprite {
+                        color: Color::linear_rgba(1.0, 1.0, 1.0, 0.8),
+                        ..Sprite::from_image(assets.disconnected_sprite.clone())
+                    },
+                    Transform::from_xyz(0.0, 0.0, 2.0).with_scale(Vec3::splat(0.07)),
                 ));
+            }
+            ServerMessage::GameFinished { final_scores, .. } => {
+                if *catched_up {
+                    commands.spawn((
+                        AudioPlayer::new(assets.vo_finalscores.clone()),
+                        PlaybackSettings::DESPAWN,
+                    ));
+                }
+
+                let mut final_scores = final_scores.iter().collect::<Vec<_>>();
+                final_scores.sort_by_key(|(_, score)| *score);
+                final_scores.reverse();
+
+                commands
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(100.0),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            flex_direction: FlexDirection::Column,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+                    ))
+                    .with_children(|parent| {
+                        for (i, (player_id, score)) in final_scores.iter().enumerate() {
+                            let player_entity = state.player_index.get(*player_id).unwrap();
+                            let player_state = players.get(*player_entity).unwrap();
+                            parent.spawn((
+                                TextShadow::default(),
+                                Text::new(format!(
+                                    "{}: {} - {}",
+                                    i + 1,
+                                    player_state.username,
+                                    score
+                                )),
+                                TextFont {
+                                    font_size: 30.0,
+                                    ..default()
+                                },
+                            ));
+                        }
+                    });
             }
             _ => (),
         }

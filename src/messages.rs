@@ -36,6 +36,9 @@ pub enum ClientClaim {
         held_card_id: CardId,
     },
     SlapTable,
+    SetUsername {
+        username: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -117,6 +120,11 @@ pub enum ServerMessage {
     },
     GameFinished {
         all_cards: HashMap<CardId, KnownCard>,
+        final_scores: HashMap<PlayerId, i32>,
+    },
+    SetUsername {
+        actor: PlayerId,
+        username: String,
     },
 }
 
