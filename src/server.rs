@@ -377,7 +377,6 @@ fn trigger_server_events(
             let (next_player_id, next_player) = all_players[next_player_idx];
 
             let event = if immunity.contains(*next_player) {
-                let mut to_reveal = HashMap::new();
                 let mut final_score = HashMap::new();
 
                 for (player_id, player_entity) in state.player_index.iter() {
@@ -390,7 +389,6 @@ fn trigger_server_events(
                             .next()
                         {
                             let known_card = state.card_lookup.0.get(card_id).unwrap();
-                            to_reveal.insert(*card_id, *known_card);
                             score += known_card.penalty_score();
                         }
                     }
@@ -398,7 +396,7 @@ fn trigger_server_events(
                 }
 
                 ServerMessage::GameFinished {
-                    all_cards: to_reveal,
+                    all_cards: state.card_lookup.0.clone(),
                     final_scores: final_score,
                 }
             } else {

@@ -708,7 +708,7 @@ pub fn process_single_event(
                 }
 
                 // Player is has claimed a discard opportunity!
-                // The other players holding such a card were too late and put the card back
+                // The other players holding such a card were too late and we put the card back
                 for (held_card, _) in held.iter().filter(|(_, held_by)| held_by.0 != *actor) {
                     if let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(held_card) {
                         // This card is held by someone else trying to claim a dicard opportunity,
@@ -992,6 +992,8 @@ pub fn process_single_event(
 
             let player_entity = player_must_exists!(actor);
             let mut turn_state = must_have_turn!(actor);
+            player_must_not_be_holding_a_card!(actor);
+
             if *turn_state != PlayerAtTurn::Start {
                 reject!("Can only slap the table at the start of a turn");
             }
@@ -1001,8 +1003,31 @@ pub fn process_single_event(
         }
         ServerMessage::GameFinished { all_cards, .. } => {
             for (card_id, known_card) in all_cards.iter() {
-                card_must_exists!(card_id);
                 state.card_lookup.0.insert(*card_id, *known_card);
+            }
+
+            // The game is finished! Anyone holding a card puts it back
+            for (held_card, _) in held.iter() {
+                if let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(held_card) {
+                    // This card is held by someone else trying to claim a dicard opportunity,
+                    // but they were to late! Let's put the card back where it came from.
+                    let slot_entity = slot_must_exists!(originating_slot);
+                    let held_card_id = card_ids.get(held_card).expect("Card index corrupted");
+
+                    commands
+                        .entity(held_card)
+                        .remove::<IsHeldBy>()
+                        .remove::<KnownCard>()
+                        .remove::<UnrevealKnownCardTimer>()
+                        .remove::<TakenFromSlot>()
+                        .insert(ChildOf(slot_entity))
+                        .insert(Pickable::default())
+                        .insert(Transform::from_xyz(0.0, 0.0, 1.0));
+
+                    if let Some(known_value) = state.card_lookup.0.get(held_card_id) {
+                        commands.entity(held_card).insert(*known_value);
+                    }
+                }
             }
 
             for (_, player_state) in players.iter() {
@@ -1025,8 +1050,9 @@ pub fn process_single_event(
             }
 
             for (card_id, known_card) in all_cards.iter() {
-                let card_entity = card_must_exists!(card_id);
-                commands.entity(card_entity).insert(*known_card);
+                if let Some(card_entity) = state.card_index.get(card_id) {
+                    commands.entity(*card_entity).insert(*known_card);
+                }
             }
 
             state.game_finished = true;

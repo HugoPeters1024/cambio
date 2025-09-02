@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use bevy::platform::collections::HashMap;
 use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_matchbox::prelude::*;
 use bevy_tweening::lens::TransformRotateZLens;
@@ -27,6 +28,9 @@ struct PlayerNameText;
 
 #[derive(Component)]
 struct SlapTableButton;
+
+#[derive(Component)]
+struct CursorIconFor(PlayerId);
 
 pub trait ClientExt {
     fn send_claim(&mut self, claim: ClientClaim);
@@ -81,6 +85,8 @@ impl Plugin for ClientPlugin {
             player_ids: Query<&PlayerId>,
             mut commands: Commands,
             mut client: ResMut<MatchboxSocket>,
+            mut window: Single<&mut Window, With<PrimaryWindow>>,
+            assets: Res<GameAssets>,
             connection_settings: Res<ConnectionSettings>,
         ) {
             let player_id = *player_ids.get(trigger.target()).unwrap();
@@ -89,29 +95,51 @@ impl Plugin for ClientPlugin {
             // a claim to update our username
             if player_id.peer_id == client.id().unwrap() {
                 commands.entity(trigger.target()).insert(MyPlayer);
+                window.cursor_options.visible = false;
 
                 client.send_claim(ClientClaim::SetUsername {
                     username: connection_settings.username.clone(),
                 });
             }
 
-            commands.entity(trigger.target()).with_child((
-                PlayerNameText,
-                Text2d::new(format!("Player {}", player_id.player_number())),
-                TextFont::from_font_size(14.0),
-                Transform::from_xyz(
-                    0.0,
-                    (DESIRED_CARD_HEIGHT + 15.0) * player_id.up_or_down(),
-                    1.0,
-                ),
-                TextColor(Color::WHITE),
+            // spawn cursor
+            commands.spawn((
+                CursorIconFor(player_id),
+                Sprite::from_image(assets.cursor_sprite.clone()),
+                Transform::from_scale(Vec3::new(0.1, 0.1, 1.0))
+                    .with_translation(Vec3::new(0.0, 0.0, 100.0)),
             ));
+
+            commands
+                .entity(trigger.target())
+                .with_child((
+                    PlayerNameText,
+                    Text2d::new(format!("Player {}", player_id.player_number())),
+                    TextFont::from_font_size(14.0),
+                    Transform::from_xyz(
+                        0.0,
+                        (DESIRED_CARD_HEIGHT + 15.0) * player_id.up_or_down(),
+                        1.0,
+                    ),
+                    TextColor(Color::WHITE),
+                ))
+                .observe(
+                    |trigger: Trigger<OnAdd, HasImmunity>,
+                     mut commands: Commands,
+                     assets: Res<GameAssets>| {
+                        commands.entity(trigger.target()).with_child((
+                            Sprite::from_image(assets.locked_sprite.clone()),
+                            Transform::from_translation(Vec3::new(0.0, 0.0, 10.0))
+                                .with_scale(Vec3::splat(0.2)),
+                        ));
+                    },
+                );
         }
 
         fn on_discard_pile_spawn(trigger: Trigger<OnAdd, DiscardPile>, mut commands: Commands) {
             commands.entity(trigger.target()).insert((
                 Name::new("Discard Pile"),
-                DiscardPile,
+                GrowOnHover,
                 Transform::from_xyz(0.0, 0.0, 0.0),
                 Sprite::from_color(
                     Color::srgb(0.0, 0.0, 0.2),
@@ -163,6 +191,7 @@ fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: 
             InheritedVisibility::default(),
             ChildOf(state.0),
             Pickable::default(),
+            GrowOnHover,
         ))
         .observe(click_deck)
         .id();
@@ -184,9 +213,13 @@ fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: 
         .spawn((
             ChildOf(state.0),
             SlapTableButton,
-            Sprite::from_image(assets.slap_table_sprite.clone()),
+            Sprite {
+                custom_size: Some(Vec2::splat(DESIRED_CARD_WIDTH)),
+                ..Sprite::from_image(assets.slap_table_sprite.clone())
+            },
             Pickable::default(),
-            Transform::from_xyz(90.0, 0.0, 0.0).with_scale(Vec3::splat(0.05)),
+            Transform::from_xyz(90.0, 0.0, 0.0),
+            GrowOnHover,
         ))
         .observe(
             |_: Trigger<Pointer<Click>>, mut client: ResMut<MatchboxSocket>| {
@@ -255,6 +288,7 @@ fn client_sync_players(
     state: Single<(Entity, &CambioState)>,
     mut players: Query<&mut PlayerState>,
     me: Query<&MyPlayer>,
+    mut cursors: Query<(&mut Transform, &CursorIconFor)>,
     mut client: ResMut<MatchboxSocket>,
 ) {
     let (root, state) = *state;
@@ -283,18 +317,26 @@ fn client_sync_players(
                 .0;
         match message {
             ServerMessageUnreliable::MousePositions(items) => {
-                for (player_id, mouse_pos) in items {
-                    if state.player_index.get(&player_id).is_none() {
+                for (player_id, mouse_pos) in items.iter() {
+                    if state.player_index.get(player_id).is_none() {
                         continue;
                     }
-                    if me.contains(state.player_index[&player_id]) {
+                    if me.contains(state.player_index[player_id]) {
                         // We use the local mouse position to reduce
                         // visual latency
                         continue;
                     }
 
-                    if let Ok(mut player_state) = players.get_mut(state.player_index[&player_id]) {
-                        player_state.last_mouse_pos_world = mouse_pos;
+                    if let Ok(mut player_state) = players.get_mut(state.player_index[player_id]) {
+                        player_state.last_mouse_pos_world = *mouse_pos;
+                    }
+                }
+
+                let lookup = items.iter().cloned().collect::<HashMap<_, _>>();
+                for (mut t, CursorIconFor(target)) in cursors.iter_mut() {
+                    if let Some(mouse_pos) = lookup.get(target) {
+                        t.translation.x = mouse_pos.x;
+                        t.translation.y = mouse_pos.y;
                     }
                 }
             }
@@ -435,31 +477,40 @@ fn on_player_turn_added(
         return;
     };
 
-    let up_down_tween = Tween::new(
-        EaseFunction::QuadraticInOut,
-        Duration::from_millis(500),
-        TransformPositionLens {
-            start: Vec3::new(0.0, 100.0 * player_id.up_or_down(), 0.0),
-            end: Vec3::new(0.0, (110.0 + 15.0) * player_id.up_or_down(), 0.0),
-        },
-    )
-    .with_repeat_strategy(RepeatStrategy::MirroredRepeat)
-    .with_repeat_count(RepeatCount::Infinite);
-
-    commands.entity(trigger.target()).with_child((
-        PlayerTurnIcon,
-        Transform::from_scale(Vec3::splat(0.1)).with_translation(Vec3::new(0.0, 0.0, 30.0)),
-        Sprite::from_image(assets.arrow_down_sprite.clone()),
-        Animator::new(up_down_tween),
-        // drop shadow
-        children![(
+    for i in 0..2 {
+        let left_or_right = if i == 0 { -1.0 } else { 1.0 };
+        commands.entity(trigger.target()).with_child((
+            PlayerTurnIcon,
+            Transform::from_rotation(Quat::from_rotation_z(
+                -std::f32::consts::PI / 2.0 * left_or_right,
+            )),
             Sprite {
-                color: Color::linear_rgba(0.0, 0.0, 0.0, 1.0),
+                custom_size: Some(Vec2::splat(20.0)),
                 ..Sprite::from_image(assets.arrow_down_sprite.clone())
             },
-            Transform::from_xyz(5.0, -5.0, -1.0),
-        )],
-    ));
+            Animator::new(
+                Tween::new(
+                    EaseFunction::QuadraticInOut,
+                    Duration::from_millis(500),
+                    TransformPositionLens {
+                        start: Vec3::new(70.0 * left_or_right, 75.0 * player_id.up_or_down(), 0.0),
+                        end: Vec3::new(60.0 * left_or_right, 75.0 * player_id.up_or_down(), 0.0),
+                    },
+                )
+                .with_repeat_strategy(RepeatStrategy::MirroredRepeat)
+                .with_repeat_count(RepeatCount::Infinite),
+            ),
+            // drop shadow
+            children![(
+                Sprite {
+                    color: Color::linear_rgba(0.0, 0.0, 0.0, 1.0),
+                    custom_size: Some(Vec2::splat(20.0)),
+                    ..Sprite::from_image(assets.arrow_down_sprite.clone())
+                },
+                Transform::from_xyz(1.0, -1.0, -1.0),
+            )],
+        ));
+    }
 }
 
 fn on_player_turn_removed(
@@ -590,7 +641,7 @@ fn on_message_accepted(
                         color: Color::linear_rgba(1.0, 1.0, 1.0, 0.8),
                         ..Sprite::from_image(assets.disconnected_sprite.clone())
                     },
-                    Transform::from_xyz(0.0, 0.0, 2.0).with_scale(Vec3::splat(0.07)),
+                    Transform::from_xyz(0.0, 0.0, 15.0).with_scale(Vec3::splat(0.07)),
                 ));
             }
             ServerMessage::GameFinished { final_scores, .. } => {

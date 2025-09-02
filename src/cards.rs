@@ -64,7 +64,7 @@ impl KnownCard {
 }
 
 #[derive(Debug, Component, PartialEq, Eq, Clone, Copy, Default)]
-#[require(Transform, Sprite)]
+#[require(Transform, Sprite, GrowOnHover)]
 pub struct SomeCard;
 
 #[derive(Debug, Component, Default)]
@@ -72,6 +72,9 @@ pub struct SomeCard;
 pub struct CardSlot;
 
 pub struct CardPlugin;
+
+#[derive(Component, Default)]
+pub struct GrowOnHover;
 
 impl Plugin for CardPlugin {
     fn build(&self, app: &mut App) {
@@ -81,7 +84,29 @@ impl Plugin for CardPlugin {
         );
         app.add_observer(on_spawn_card);
         app.add_observer(on_spawn_slot);
+        app.add_observer(setup_grow_on_hover);
     }
+}
+
+fn setup_grow_on_hover(trigger: Trigger<OnAdd, GrowOnHover>, mut commands: Commands) {
+    fn on_hover_in(trigger: Trigger<Pointer<Over>>, mut t: Query<&mut Transform>) {
+        if let Ok(mut transform) = t.get_mut(trigger.target()) {
+            transform.scale.x = 1.1;
+            transform.scale.y = 1.1;
+        }
+    }
+
+    fn on_hover_out(trigger: Trigger<Pointer<Out>>, mut t: Query<&mut Transform>) {
+        if let Ok(mut transform) = t.get_mut(trigger.target()) {
+            transform.scale.x = 1.0;
+            transform.scale.y = 1.0;
+        }
+    }
+
+    commands
+        .entity(trigger.target())
+        .observe(on_hover_in)
+        .observe(on_hover_out);
 }
 
 fn sync_sprite_with_card(
