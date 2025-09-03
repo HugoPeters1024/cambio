@@ -1,0 +1,14 @@
+[package]
+name = "signaling"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+matchbox_signaling = "0.12.0"
+tokio = "1.47.1"
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-trait = "0.1"
+axum = "0.8.4"
+matchbox_protocol = "0.12.0"
+futures = { version = "0.3", default-features = false, features = ["alloc"] }

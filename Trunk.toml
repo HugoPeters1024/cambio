@@ -3,3 +3,6 @@ public_url = "./"
 
 [serve]
 port = 8080
+
+[watch]
+ignore = ["crates/signaling"]

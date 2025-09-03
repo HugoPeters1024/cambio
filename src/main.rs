@@ -15,8 +15,6 @@ mod client;
 mod menu;
 mod messages;
 mod utils;
-
-#[cfg(not(target_arch = "wasm32"))]
 mod server;
 
 use crate::assets::*;
@@ -39,24 +37,18 @@ fn main() {
     app.add_plugins(bevy_rand::plugin::EntropyPlugin::<bevy_rand::prelude::WyRand>::default());
 
     if is_host {
-        #[cfg(target_arch = "wasm32")]
-        panic!("Server is not supported on this platform");
+        use bevy::app::{RunMode, ScheduleRunnerPlugin};
+        use std::time::Duration;
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            use bevy::app::{RunMode, ScheduleRunnerPlugin};
-            use std::time::Duration;
-
-            app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin {
-                run_mode: RunMode::Loop {
-                    wait: Some(Duration::from_millis(5)),
-                },
-            }));
-            app.add_plugins(bevy::log::LogPlugin::default());
-            app.add_plugins(CambioPlugin);
-            app.add_plugins(crate::server::ServerPlugin);
-            app.insert_resource(Time::<Fixed>::from_hz(300.0));
-        }
+        app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin {
+            run_mode: RunMode::Loop {
+                wait: Some(Duration::from_millis(5)),
+            },
+        }));
+        app.add_plugins(bevy::log::LogPlugin::default());
+        app.add_plugins(CambioPlugin);
+        app.add_plugins(crate::server::ServerPlugin);
+        app.insert_resource(Time::<Fixed>::from_hz(300.0));
     } else {
         app.add_plugins(
             DefaultPlugins
