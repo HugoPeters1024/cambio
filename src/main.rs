@@ -59,6 +59,7 @@ fn main() {
     // systems keep running in that case.
     app.insert_resource(WinitSettings {
         unfocused_mode: UpdateMode::Continuous,
+        focused_mode: UpdateMode::Continuous,
         ..default()
     });
     app.add_plugins(bevy_tweening::TweeningPlugin);

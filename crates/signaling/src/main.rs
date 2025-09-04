@@ -12,6 +12,7 @@ use crate::{
 
 mod state;
 mod topology;
+mod host;
 
 fn setup_logging() {
     tracing_subscriber::registry()
@@ -53,6 +54,8 @@ async fn main() {
         .trace()
         .mutate_router(|router| router.route("/health", get(health_handler)))
         .build();
+
+    info!("Starting signaling server");
     server
         .serve()
         .await

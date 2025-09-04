@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bevy = {version = "0.16.1", default-features = false, features = ["serialize", "bevy_log"]}
+bevy_matchbox = { version = "0.12.0" }
 matchbox_signaling = "0.12.0"
 tokio = "1.47.1"
 tracing = { version = "0.1", features = ["log"] }
@@ -12,3 +14,4 @@ async-trait = "0.1"
 axum = "0.8.4"
 matchbox_protocol = "0.12.0"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
+cambio_logic = { path = "../cambio_logic" }
