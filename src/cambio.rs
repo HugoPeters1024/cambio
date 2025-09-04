@@ -77,7 +77,7 @@ pub enum TurnBuff {
 }
 
 #[derive(Component, Debug, PartialEq, Eq)]
-pub enum PlayerAtTurn {
+pub enum TurnState {
     Start,
     TookDeckCard,
     HasBuff(TurnBuff),
@@ -184,7 +184,7 @@ pub fn process_single_event(
     may_give_card_to: Query<&MayGiveCardTo>,
     immunity: Query<&HasImmunity>,
     mut accepted: EventWriter<AcceptedMessage>,
-    mut player_at_turn: Query<(Entity, &mut PlayerAtTurn)>,
+    mut player_at_turn: Query<(Entity, &mut TurnState)>,
     mut commands: Commands,
 ) -> Option<ServerMessage> {
     info!("Processing message: {:?}", msg);
@@ -524,10 +524,10 @@ pub fn process_single_event(
 
                 if let Ok(TakenFromSlot(taken_from_slot)) = taken_from_slot.get(card_entity) {
                     match &*turn_state {
-                        PlayerAtTurn::HasBuff(TurnBuff::MaySwapTwoCards {
+                        TurnState::HasBuff(TurnBuff::MaySwapTwoCards {
                             has_swapped_from_slot: Some(swap_origin),
                         })
-                        | PlayerAtTurn::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
+                        | TurnState::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
                             has_swapped_from_slot: Some(swap_origin),
                             ..
                         }) => {
@@ -536,7 +536,7 @@ pub fn process_single_event(
                                     "You may only drop put this card back on the slot where it was swapped from"
                                 );
                             }
-                            *turn_state = PlayerAtTurn::Finished;
+                            *turn_state = TurnState::Finished;
                         }
                         _ => {
                             if taken_from_slot != slot_id {
@@ -568,49 +568,43 @@ pub fn process_single_event(
             slot_id,
             check_turn,
         } => {
-            let player_entity = player_must_exists!(actor);
+            let _player_entity = player_must_exists!(actor);
             let card_entity = card_must_exists!(card_id);
+            let _slot_entity = slot_must_exists!(slot_id);
             slot_must_have_card!(slot_id, card_id);
             slot_owner_must_not_be_immune!(slot_id);
+            let slot_owner = slot_owner!(slot_id);
 
             if *check_turn {
                 let mut turn_state = must_have_turn!(actor);
 
                 match &*turn_state {
-                    PlayerAtTurn::HasBuff(buff) => {
-                        let slot_entity = slot_must_exists!(slot_id);
-                        let Ok(player_state) = players.get_mut(player_entity) else {
-                            reject!("Player index corrupted");
-                        };
-
-                        match buff {
-                            TurnBuff::MayLookAtOwnCard => {
-                                if !player_state.1.slots.contains(&slot_entity) {
-                                    reject!("Cannot reveal another player's card.");
-                                }
-                                *turn_state = PlayerAtTurn::Finished;
+                    TurnState::HasBuff(buff) => match buff {
+                        TurnBuff::MayLookAtOwnCard => {
+                            if actor != slot_owner {
+                                reject!("Cannot reveal another player's card.");
                             }
-                            TurnBuff::MayLookAtOtherPlayersCard => {
-                                if player_state.1.slots.contains(&slot_entity) {
-                                    reject!("Cannot reveal your own card.");
-                                }
-                                *turn_state = PlayerAtTurn::Finished;
-                            }
-                            TurnBuff::MaySwapTwoCards { .. } => {
-                                reject!("Cannot reveal a card at this point.");
-                            }
-                            TurnBuff::MayLookAtCardAndThenSwap { has_looked_at, .. } => {
-                                if has_looked_at.is_some() {
-                                    reject!("You already looked at a card.");
-                                }
-                                *turn_state =
-                                    PlayerAtTurn::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
-                                        has_looked_at: Some(*slot_id),
-                                        has_swapped_from_slot: None,
-                                    })
-                            }
+                            *turn_state = TurnState::Finished;
                         }
-                    }
+                        TurnBuff::MayLookAtOtherPlayersCard => {
+                            if actor == slot_owner {
+                                reject!("Cannot reveal your own card.");
+                            }
+                            *turn_state = TurnState::Finished;
+                        }
+                        TurnBuff::MaySwapTwoCards { .. } => {
+                            reject!("Cannot reveal a card at this point.");
+                        }
+                        TurnBuff::MayLookAtCardAndThenSwap { has_looked_at, .. } => {
+                            if has_looked_at.is_some() {
+                                reject!("You already looked at a card.");
+                            }
+                            *turn_state = TurnState::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
+                                has_looked_at: Some(*slot_id),
+                                has_swapped_from_slot: None,
+                            })
+                        }
+                    },
                     _ => {
                         reject!("Cannot reveal a card at this point.");
                     }
@@ -633,7 +627,7 @@ pub fn process_single_event(
             let _player_entity = player_must_exists!(actor);
             let mut turn_state = must_have_turn!(actor);
 
-            if *turn_state != PlayerAtTurn::Start {
+            if *turn_state != TurnState::Start {
                 reject!(
                     "Can only take cards at the start of a turn, but turn state is {:?}.",
                     turn_state
@@ -647,7 +641,7 @@ pub fn process_single_event(
                 );
             }
 
-            *turn_state = PlayerAtTurn::TookDeckCard;
+            *turn_state = TurnState::TookDeckCard;
 
             card_id_must_be_top_of_deck!(card_id);
             let card_entity = commands
@@ -728,11 +722,11 @@ pub fn process_single_event(
             } else {
                 let mut turn_state = must_have_turn!(actor);
                 match *turn_state {
-                    PlayerAtTurn::TookDeckCard => {
+                    TurnState::TookDeckCard => {
                         // Depending on the deck card that was discarded, players might
                         // receive a buff they can execute first.
                         if known_value.rank == Rank::Seven || known_value.rank == Rank::Eight {
-                            *turn_state = PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOwnCard);
+                            *turn_state = TurnState::HasBuff(TurnBuff::MayLookAtOwnCard);
                         } else if known_value.rank == Rank::Nine || known_value.rank == Rank::Ten {
                             // Only if there is another elligble player to look at
                             if state
@@ -742,34 +736,33 @@ pub fn process_single_event(
                                 .count()
                                 == 0
                             {
-                                *turn_state = PlayerAtTurn::Finished;
+                                *turn_state = TurnState::Finished;
                             } else {
                                 *turn_state =
-                                    PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOtherPlayersCard);
+                                    TurnState::HasBuff(TurnBuff::MayLookAtOtherPlayersCard);
                             }
                         } else if known_value.rank == Rank::Jack || known_value.rank == Rank::Queen
                         {
-                            *turn_state = PlayerAtTurn::HasBuff(TurnBuff::MaySwapTwoCards {
+                            *turn_state = TurnState::HasBuff(TurnBuff::MaySwapTwoCards {
                                 has_swapped_from_slot: None,
                             });
                         } else if known_value.rank == Rank::King {
-                            *turn_state =
-                                PlayerAtTurn::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
-                                    has_looked_at: None,
-                                    has_swapped_from_slot: None,
-                                });
+                            *turn_state = TurnState::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
+                                has_looked_at: None,
+                                has_swapped_from_slot: None,
+                            });
                         } else {
-                            *turn_state = PlayerAtTurn::Finished;
+                            *turn_state = TurnState::Finished;
                         }
                     }
-                    PlayerAtTurn::SwappedCard => {
-                        *turn_state = PlayerAtTurn::Finished;
+                    TurnState::SwappedCard => {
+                        *turn_state = TurnState::Finished;
                     }
-                    PlayerAtTurn::TookDiscardedCard => {
+                    TurnState::TookDiscardedCard => {
                         // Fine, the player is allowed to reconsider
-                        *turn_state = PlayerAtTurn::Start;
+                        *turn_state = TurnState::Start;
                     }
-                    PlayerAtTurn::Start | PlayerAtTurn::HasBuff { .. } | PlayerAtTurn::Finished => {
+                    TurnState::Start | TurnState::HasBuff { .. } | TurnState::Finished => {
                         reject!("Couldn't be holding a card at this point.");
                     }
                 }
@@ -797,9 +790,9 @@ pub fn process_single_event(
             let player_entity = player_must_exists!(player_id);
 
             for (entity, _) in player_at_turn.iter() {
-                commands.entity(entity).remove::<PlayerAtTurn>();
+                commands.entity(entity).remove::<TurnState>();
             }
-            commands.entity(player_entity).insert(PlayerAtTurn::Start);
+            commands.entity(player_entity).insert(TurnState::Start);
         }
         ServerMessage::TakeCardFromDiscardPile { actor, card_id } => {
             let _player_entity = player_must_exists!(actor);
@@ -821,13 +814,13 @@ pub fn process_single_event(
                 reject!("Provided card is not on top of the discard pile");
             }
 
-            if *turn_state != PlayerAtTurn::Start {
+            if *turn_state != TurnState::Start {
                 reject!(
                     "Can only take cards at the start of a turn, but turn state is {:?}.",
                     turn_state
                 );
             }
-            *turn_state = PlayerAtTurn::TookDiscardedCard;
+            *turn_state = TurnState::TookDiscardedCard;
 
             state.discard_pile.pop_front();
             commands
@@ -848,12 +841,9 @@ pub fn process_single_event(
             player_must_be_holding_card!(actor, held_card_id);
             slot_must_have_card!(slot_id, slot_card_id);
             slot_owner_must_not_be_immune!(slot_id);
+            let slot_owner = slot_owner!(slot_id);
 
             let slot_card_entity = card_must_exists!(slot_card_id);
-
-            let Ok(player_state) = players.get_mut(player_entity) else {
-                reject!("Player index corrupted");
-            };
 
             if may_give_card_to.contains(player_entity) {
                 reject!("Giving a card to another players is a buff that takes priority.");
@@ -861,28 +851,28 @@ pub fn process_single_event(
 
             let mut turn_state = must_have_turn!(actor);
             match *turn_state {
-                PlayerAtTurn::TookDeckCard | PlayerAtTurn::TookDiscardedCard => {
-                    if !player_state.1.slots.contains(&slot_entity) {
+                TurnState::TookDeckCard | TurnState::TookDiscardedCard => {
+                    if slot_owner != actor {
                         reject!("Cannot swap a card on another player's slot.");
                     }
-                    *turn_state = PlayerAtTurn::SwappedCard;
+                    *turn_state = TurnState::SwappedCard;
                 }
-                PlayerAtTurn::Start => {
+                TurnState::Start => {
                     reject!("Cannot swap a card at the start of a turn.");
                 }
-                PlayerAtTurn::Finished => {
+                TurnState::Finished => {
                     reject!("Cannot swap a card at the end of a turn.");
                 }
-                PlayerAtTurn::SwappedCard => {
+                TurnState::SwappedCard => {
                     reject!("Cannot swap a card twice.");
                 }
-                PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOwnCard) => {
+                TurnState::HasBuff(TurnBuff::MayLookAtOwnCard) => {
                     reject!("Cannot swap a card at this point");
                 }
-                PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOtherPlayersCard) => {
+                TurnState::HasBuff(TurnBuff::MayLookAtOtherPlayersCard) => {
                     reject!("Cannot swap a card at this point");
                 }
-                PlayerAtTurn::HasBuff(TurnBuff::MaySwapTwoCards {
+                TurnState::HasBuff(TurnBuff::MaySwapTwoCards {
                     has_swapped_from_slot,
                 }) => {
                     let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(held_card_entity)
@@ -895,13 +885,13 @@ pub fn process_single_event(
                             reject!("Already swapped two cards");
                         }
                         None => {
-                            *turn_state = PlayerAtTurn::HasBuff(TurnBuff::MaySwapTwoCards {
+                            *turn_state = TurnState::HasBuff(TurnBuff::MaySwapTwoCards {
                                 has_swapped_from_slot: Some(*originating_slot),
                             });
                         }
                     }
                 }
-                PlayerAtTurn::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
+                TurnState::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
                     has_looked_at,
                     has_swapped_from_slot,
                 }) => {
@@ -922,7 +912,7 @@ pub fn process_single_event(
                         reject!("The swap has to include the card you looked at");
                     };
 
-                    *turn_state = PlayerAtTurn::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
+                    *turn_state = TurnState::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
                         has_looked_at: Some(has_looked_at_slot),
                         has_swapped_from_slot: Some(*originating_slot),
                     });
@@ -995,11 +985,11 @@ pub fn process_single_event(
             let mut turn_state = must_have_turn!(actor);
             player_must_not_be_holding_a_card!(actor);
 
-            if *turn_state != PlayerAtTurn::Start {
+            if *turn_state != TurnState::Start {
                 reject!("Can only slap the table at the start of a turn");
             }
 
-            *turn_state = PlayerAtTurn::Finished;
+            *turn_state = TurnState::Finished;
             commands.entity(player_entity).insert(HasImmunity);
         }
         ServerMessage::GameFinished { all_cards, .. } => {
@@ -1047,7 +1037,7 @@ pub fn process_single_event(
             }
 
             for (entity, _) in player_at_turn.iter() {
-                commands.entity(entity).remove::<PlayerAtTurn>();
+                commands.entity(entity).remove::<TurnState>();
             }
 
             for (card_id, known_card) in all_cards.iter() {
@@ -1267,12 +1257,9 @@ mod tests {
             .unwrap()
             .clone();
         let turn_state = world
-            .get::<PlayerAtTurn>(state.player_index[&player0()])
+            .get::<TurnState>(state.player_index[&player0()])
             .unwrap();
-        assert_eq!(
-            *turn_state,
-            PlayerAtTurn::HasBuff(TurnBuff::MayLookAtOwnCard)
-        );
+        assert_eq!(*turn_state, TurnState::HasBuff(TurnBuff::MayLookAtOwnCard));
     }
 
     #[test]
@@ -1306,10 +1293,10 @@ mod tests {
             .unwrap()
             .clone();
         let turn_state = world
-            .get::<PlayerAtTurn>(state.player_index[&player0()])
+            .get::<TurnState>(state.player_index[&player0()])
             .unwrap();
 
-        assert_eq!(*turn_state, PlayerAtTurn::Finished);
+        assert_eq!(*turn_state, TurnState::Finished);
     }
 
     #[test]

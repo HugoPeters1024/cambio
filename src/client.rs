@@ -55,7 +55,7 @@ impl Plugin for ClientPlugin {
         app.add_systems(
             Update,
             (
-                on_message_accepted.run_if(in_state(GamePhase::Playing)),
+                effects_for_accepted_messages.run_if(in_state(GamePhase::Playing)),
                 on_player_state_change,
             ),
         );
@@ -197,7 +197,7 @@ fn sync_cursors_from_state(
 fn update_player_turn_state(
     mut commands: Commands,
     me: Single<&PlayerId, With<MyPlayer>>,
-    turn_state: Query<&PlayerAtTurn, With<MyPlayer>>,
+    turn_state: Query<&TurnState, With<MyPlayer>>,
     extra: Query<&MayGiveCardTo, With<MyPlayer>>,
     slap_table_button: Single<Entity, With<SlapTableButton>>,
     immunity: Query<&HasImmunity>,
@@ -211,12 +211,12 @@ fn update_player_turn_state(
     let mut turn_description = "".to_string();
     if let Some(player_at_turn) = turn_state.iter().next() {
         turn_description = match player_at_turn {
-            PlayerAtTurn::Start => "Turn start",
-            PlayerAtTurn::TookDeckCard => "You took a card from the deck",
-            PlayerAtTurn::TookDiscardedCard => "You took a card from the discard pile",
-            PlayerAtTurn::SwappedCard => "You swapped a card",
-            PlayerAtTurn::Finished => "Turn end",
-            PlayerAtTurn::HasBuff(buff) => match buff {
+            TurnState::Start => "Turn start",
+            TurnState::TookDeckCard => "You took a card from the deck",
+            TurnState::TookDiscardedCard => "You took a card from the discard pile",
+            TurnState::SwappedCard => "You swapped a card",
+            TurnState::Finished => "Turn end",
+            TurnState::HasBuff(buff) => match buff {
                 TurnBuff::MayLookAtOwnCard => "Buff! You may look at one of your cards",
                 TurnBuff::MayLookAtOtherPlayersCard => "Buff! You may look at someone else's cards",
                 TurnBuff::MaySwapTwoCards { .. } => "Buff! You may swap two cards",
@@ -228,7 +228,7 @@ fn update_player_turn_state(
         .to_string();
 
         // Revealed if it's at the start of your turn and nobody's done it yet
-        if *player_at_turn == PlayerAtTurn::Start && immunity.is_empty() {
+        if *player_at_turn == TurnState::Start && immunity.is_empty() {
             commands
                 .entity(*slap_table_button)
                 .insert(Visibility::Inherited);
@@ -373,7 +373,7 @@ fn click_slot(
 }
 
 fn on_player_turn_added(
-    trigger: Trigger<OnAdd, PlayerAtTurn>,
+    trigger: Trigger<OnAdd, TurnState>,
     mut commands: Commands,
     players: Query<&PlayerId>,
     assets: Res<GameAssets>,
@@ -419,7 +419,7 @@ fn on_player_turn_added(
 }
 
 fn on_player_turn_removed(
-    trigger: Trigger<OnRemove, PlayerAtTurn>,
+    trigger: Trigger<OnRemove, TurnState>,
     mut commands: Commands,
     children: Query<&Children>,
     icon: Query<Entity, With<PlayerTurnIcon>>,
@@ -449,13 +449,13 @@ fn on_player_state_change(
     }
 }
 
-fn on_message_accepted(
+fn effects_for_accepted_messages(
     mut commands: Commands,
     assets: Res<GameAssets>,
     me: Single<Entity, With<MyPlayer>>,
     player_ids: Query<(Entity, &PlayerId)>,
     players: Query<&PlayerState>,
-    mut state: Single<&mut CambioState>,
+    state: Single<&CambioState>,
     mut catched_up: Local<bool>,
     mut accepted: EventReader<AcceptedMessage>,
 ) {

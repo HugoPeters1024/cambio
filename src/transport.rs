@@ -8,7 +8,7 @@ use rand::Rng;
 
 use crate::{
     assets::GamePhase,
-    cambio::{CambioState, PlayerId, PlayerState, process_single_event},
+    cambio::{AcceptedMessage, CambioState, PlayerId, PlayerState, process_single_event},
     host_utils::host_eval_event,
     messages::{
         ClientClaim, ClientClaimUnreliable, RELIABLE_CHANNEL, ServerMessage,
@@ -166,6 +166,7 @@ impl Plugin for TransportPlugin {
                 host_receives_claims_from_clients,
                 host_processes_reliable_claims,
                 host_processes_unreliable_claims,
+                host_persists_and_broadcasts_accepted_events,
                 client_receives_reliable_results,
                 client_receives_unreliable_results,
             )
@@ -271,10 +272,9 @@ fn host_receives_claims_from_clients(transport: ResMut<Transport>) {
 fn host_processes_reliable_claims(
     mut commands: Commands,
     transport: ResMut<Transport>,
-    state: Single<(Entity, &CambioState)>,
+    state: Single<&CambioState>,
     mut entropy: GlobalEntropy<WyRand>,
 ) {
-    let (root, state) = *state;
     let Transport::Host(host) = transport.into_inner() else {
         return;
     };
@@ -409,6 +409,64 @@ fn host_processes_unreliable_claims(
         host.socket
             .channel_mut(UNRELIABLE_CHANNEL)
             .send(encoded.clone(), peer_id);
+    }
+}
+
+fn host_persists_and_broadcasts_accepted_events(
+    transport: ResMut<Transport>,
+    mut accepted: EventReader<AcceptedMessage>,
+    state: Single<&CambioState>,
+) {
+    let Transport::Host(host) = transport.into_inner() else {
+        return;
+    };
+    let peers = host.socket.connected_peers().collect::<Vec<_>>();
+
+    let mut broadcast_and_store = |msg: ServerMessage| {
+        for peer_id in peers.iter() {
+            let player_id = state
+                .player_index
+                .keys()
+                .find(|player_id| player_id.peer_id == *peer_id)
+                .unwrap();
+
+            let packet = bincode::serde::encode_to_vec(
+                &msg.redacted_for(player_id),
+                bincode::config::standard(),
+            )
+            .unwrap()
+            .into_boxed_slice();
+
+            host.socket
+                .channel_mut(RELIABLE_CHANNEL)
+                .send(packet, *peer_id);
+        }
+        host.accepted_history.push(msg.clone());
+    };
+
+    for AcceptedMessage(msg) in accepted.read() {
+        // JIT publish the card values to the clients. We are the server so we don't
+        // need to process these events ourselves. It is however important that they are
+        // persisted so that players that join later can see the discard pile for example.
+        match msg {
+            ServerMessage::TakeFreshCardFromDeck { actor, card_id }
+            | ServerMessage::RevealCardAtSlot { actor, card_id, .. } => {
+                broadcast_and_store(ServerMessage::PublishCardForPlayer {
+                    player_id: *actor,
+                    card_id: *card_id,
+                    value: Some(state.card_lookup.0.get(&*card_id).unwrap().clone()),
+                });
+            }
+            ServerMessage::DropCardOnDiscardPile { card_id, .. } => {
+                broadcast_and_store(ServerMessage::PublishCardPublically {
+                    card_id: *card_id,
+                    value: state.card_lookup.0.get(&*card_id).unwrap().clone(),
+                });
+            }
+            _ => (),
+        }
+
+        broadcast_and_store(msg.clone());
     }
 }
 

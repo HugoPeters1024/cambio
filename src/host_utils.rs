@@ -37,67 +37,8 @@ pub fn host_eval_event(
         );
     }
 
-    fn accept_and_broadcast(
-        msg: In<ServerMessage>,
-        transport: ResMut<Transport>,
-        state: Single<&CambioState>,
-    ) {
-        let Transport::Host(host) = transport.into_inner() else {
-            panic!("impossible");
-        };
-        let peers = host.socket.connected_peers().collect::<Vec<_>>();
-
-        let mut go = |msg: ServerMessage| {
-            for peer_id in peers.iter() {
-                let player_id = state
-                    .player_index
-                    .keys()
-                    .find(|player_id| player_id.peer_id == *peer_id)
-                    .unwrap();
-
-                let packet = bincode::serde::encode_to_vec(
-                    &msg.redacted_for(player_id),
-                    bincode::config::standard(),
-                )
-                .unwrap()
-                .into_boxed_slice();
-
-                host.socket
-                    .channel_mut(RELIABLE_CHANNEL)
-                    .send(packet, *peer_id);
-            }
-            host.accepted_history.push(msg.clone());
-        };
-
-        match *msg {
-            ServerMessage::TakeFreshCardFromDeck { actor, card_id }
-            | ServerMessage::RevealCardAtSlot { actor, card_id, .. } => {
-                go(ServerMessage::PublishCardForPlayer {
-                    player_id: actor,
-                    card_id: card_id,
-                    value: Some(state.card_lookup.0.get(&card_id).unwrap().clone()),
-                });
-            }
-            ServerMessage::DropCardOnDiscardPile { card_id, .. } => {
-                go(ServerMessage::PublishCardPublically {
-                    card_id: card_id,
-                    value: state.card_lookup.0.get(&card_id).unwrap().clone(),
-                });
-            }
-            _ => (),
-        }
-
-        go(msg.clone());
-    }
-
     commands.run_system_cached_with(
-        process_single_event.pipe(
-            |In(msg): In<Option<ServerMessage>>, mut commands: Commands| {
-                if let Some(msg) = msg {
-                    commands.run_system_cached_with(accept_and_broadcast, msg);
-                }
-            },
-        ),
+        process_single_event.pipe(|_: In<Option<ServerMessage>>| ()),
         (root, msg),
     );
 
@@ -164,9 +105,8 @@ pub fn setup_new_player(
 pub fn give_card_to_player(
     In((player_id, slot_id, reveal)): In<(PlayerId, SlotId, bool)>,
     mut commands: Commands,
-    state: Single<(Entity, &CambioState)>,
+    state: Single<&CambioState>,
 ) {
-    let (_, state) = *state;
     let front_card = state.free_cards[0];
     commands.run_system_cached_with(
         host_eval_event,
@@ -195,7 +135,7 @@ fn trigger_host_server_events(
     root: In<Entity>,
     mut commands: Commands,
     states: Query<&CambioState>,
-    player_at_turn: Query<(Entity, &PlayerAtTurn)>,
+    player_at_turn: Query<(Entity, &TurnState)>,
     players: Query<&PlayerState>,
     card_ids: Query<&CardId>,
     children: Query<&Children>,
@@ -213,7 +153,7 @@ fn trigger_host_server_events(
     }
 
     for (current_player_at_turn, turn_state) in player_at_turn.iter() {
-        if *turn_state == PlayerAtTurn::Finished {
+        if *turn_state == TurnState::Finished {
             println!("Moving to next player");
             let mut all_players = state.player_index.iter().collect::<Vec<_>>();
             all_players.sort_by_key(|(p, _)| p.player_number());
