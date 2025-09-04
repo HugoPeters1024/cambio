@@ -107,17 +107,13 @@ pub struct CambioState {
     pub card_index: HashMap<CardId, Entity>,
     pub slot_index: HashMap<SlotId, Entity>,
     pub player_index: HashMap<PlayerId, Entity>,
-    pub message_drain: MessageDrain,
     pub card_lookup: CardValueLookup,
     pub discard_pile_entity: Entity,
     pub game_finished: bool,
 }
 
-#[derive(Default, Clone)]
-pub struct MessageDrain {
-    pub accepted: VecDeque<ServerMessage>,
-    pub rejected: VecDeque<ServerMessage>,
-}
+#[derive(Event)]
+pub struct AcceptedMessage(pub ServerMessage);
 
 #[derive(Clone, Default)]
 pub struct CardValueLookup(pub HashMap<CardId, KnownCard>);
@@ -126,6 +122,7 @@ pub struct CambioPlugin;
 
 impl Plugin for CambioPlugin {
     fn build(&self, app: &mut App) {
+        app.add_event::<AcceptedMessage>();
         app.add_systems(Update, handle_unreveal_timer);
     }
 }
@@ -163,7 +160,6 @@ pub fn spawn_cambio_root(mut commands: Commands) {
                 card_index: HashMap::new(),
                 slot_index: HashMap::new(),
                 player_index: HashMap::new(),
-                message_drain: MessageDrain::default(),
                 card_lookup: CardValueLookup::default(),
                 discard_pile_entity: discard_pile,
                 game_finished: false,
@@ -187,6 +183,7 @@ pub fn process_single_event(
     matching_discard: Query<&WasMatchingDiscard>,
     may_give_card_to: Query<&MayGiveCardTo>,
     immunity: Query<&HasImmunity>,
+    mut accepted: EventWriter<AcceptedMessage>,
     mut player_at_turn: Query<(Entity, &mut PlayerAtTurn)>,
     mut commands: Commands,
 ) -> Option<ServerMessage> {
@@ -1064,13 +1061,13 @@ pub fn process_single_event(
     }
 
     // If we're still here then we accepted the message.
-    state.message_drain.accepted.push_back(msg.clone());
+    accepted.write(AcceptedMessage(msg.clone()));
     Some(msg)
 }
 
 #[cfg(test)]
 mod tests {
-    use bevy::asset::uuid::Uuid;
+    use bevy::{asset::uuid::Uuid, ecs::event::EventRegistry};
     use strum::IntoEnumIterator;
 
     use super::*;
@@ -1098,6 +1095,7 @@ mod tests {
     impl TestSetup {
         fn new() -> TestSetup {
             let mut world = World::new();
+            EventRegistry::register_event::<AcceptedMessage>(&mut world);
 
             world.run_system_cached(spawn_cambio_root).unwrap();
             let root = world

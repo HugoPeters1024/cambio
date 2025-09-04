@@ -457,18 +457,17 @@ fn on_message_accepted(
     players: Query<&PlayerState>,
     mut state: Single<&mut CambioState>,
     mut catched_up: Local<bool>,
+    mut accepted: EventReader<AcceptedMessage>,
 ) {
-    let accepted = std::mem::take(&mut state.message_drain.accepted);
-
-    for msg in accepted {
+    for AcceptedMessage(msg) in accepted.read() {
         match msg {
             ServerMessage::FinishedReplayingHistory { player_id } => {
-                if player_id == *player_ids.get(*me).unwrap().1 {
+                if player_id == player_ids.get(*me).unwrap().1 {
                     *catched_up = true;
                 }
             }
             ServerMessage::ReceiveFreshCardFromDeck { card_id, .. } => {
-                if *catched_up && let Some(card_entity) = state.card_index.get(&card_id) {
+                if *catched_up && let Some(card_entity) = state.card_index.get(card_id) {
                     commands
                         .entity(*card_entity)
                         .insert(Animator::new(Tween::new(
@@ -496,7 +495,7 @@ fn on_message_accepted(
                         PlaybackSettings::DESPAWN,
                     ));
 
-                    if let Some(card_entity) = state.card_index.get(&slot_card_id) {
+                    if let Some(card_entity) = state.card_index.get(slot_card_id) {
                         commands.entity(*card_entity).insert(Animator::new(
                             Tween::new(
                                 EaseFunction::Linear,
@@ -540,7 +539,7 @@ fn on_message_accepted(
                 // the player is already not in the state anymore
                 let player_entity = player_ids
                     .iter()
-                    .find(|(_, id)| **id == player_id)
+                    .find(|(_, id)| *id == player_id)
                     .unwrap()
                     .0;
                 commands.entity(player_entity).with_child((
