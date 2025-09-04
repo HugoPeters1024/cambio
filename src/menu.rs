@@ -1,20 +1,21 @@
 use bevy::{color::palettes::css::*, prelude::*};
 use bevy_ui_text_input::{TextInputContents, TextInputMode, TextInputNode, TextInputPrompt};
 
-use crate::{assets::GamePhase, client::ConnectionSettings, transport::Transport};
-
-const NORMAL_BUTTON: Color = Color::srgb(0.15, 0.15, 0.15);
-const HOVERED_BUTTON: Color = Color::srgb(0.25, 0.25, 0.25);
-const PRESSED_BUTTON: Color = Color::srgb(0.35, 0.75, 0.35);
+use crate::{
+    assets::GamePhase,
+    client::ConnectionSettings,
+    menu_button::{MenuButton, MenuButtonClicked, MenuButtonPlugin},
+    transport::Transport,
+};
 
 pub struct MenuPlugin;
 
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(MenuButtonPlugin);
         app.add_plugins(bevy_ui_text_input::TextInputPlugin);
         app.add_systems(OnEnter(GamePhase::Menu), setup_menu);
         app.add_systems(OnExit(GamePhase::Menu), remove_menu);
-        app.add_systems(Update, (button_system_host_game, button_system_join_game));
     }
 }
 
@@ -208,61 +209,21 @@ fn setup_menu(mut commands: Commands) {
         });
 
     // start button
-    commands.spawn((
-        ChildOf(root),
-        Button,
-        HostGameButton,
-        Node {
-            width: Val::Px(180.0),
-            height: Val::Px(65.0),
-            border: UiRect::all(Val::Px(5.0)),
-            // horizontally center child text
-            justify_content: JustifyContent::Center,
-            // vertically center child text
-            align_items: AlignItems::Center,
-            ..default()
-        },
-        BorderColor(Color::BLACK),
-        BorderRadius::MAX,
-        BackgroundColor(NORMAL_BUTTON),
-        children![(
-            Text::new("Host Game"),
-            TextFont {
-                font_size: 21.0,
-                ..default()
-            },
-            TextColor(Color::srgb(0.9, 0.9, 0.9)),
-            TextShadow::default(),
-        )],
-    ));
+    commands
+        .spawn((
+            ChildOf(root),
+            MenuButton("Host Game".to_string()),
+            HostGameButton,
+        ))
+        .observe(on_host_game);
 
-    commands.spawn((
-        ChildOf(root),
-        Button,
-        JoinGameButton,
-        Node {
-            width: Val::Px(180.0),
-            height: Val::Px(65.0),
-            border: UiRect::all(Val::Px(5.0)),
-            // horizontally center child text
-            justify_content: JustifyContent::Center,
-            // vertically center child text
-            align_items: AlignItems::Center,
-            ..default()
-        },
-        BorderColor(Color::BLACK),
-        BorderRadius::MAX,
-        BackgroundColor(NORMAL_BUTTON),
-        children![(
-            Text::new("Join Game"),
-            TextFont {
-                font_size: 21.0,
-                ..default()
-            },
-            TextColor(Color::srgb(0.9, 0.9, 0.9)),
-            TextShadow::default(),
-        )],
-    ));
+    commands
+        .spawn((
+            ChildOf(root),
+            MenuButton("Join Game".to_string()),
+            JoinGameButton,
+        ))
+        .observe(on_join_game);
 }
 
 fn remove_menu(mut commands: Commands, query: Query<Entity, With<MenuRoot>>) {
@@ -271,118 +232,80 @@ fn remove_menu(mut commands: Commands, query: Query<Entity, With<MenuRoot>>) {
     }
 }
 
-fn button_system_host_game(
+fn on_host_game(
+    _trigger: Trigger<MenuButtonClicked>,
     mut commands: Commands,
-    mut interaction_query: Query<
-        (&Interaction, &mut BackgroundColor, &mut BorderColor),
-        (Changed<Interaction>, With<HostGameButton>),
-    >,
     server_url_input: Single<(&TextInputContents, &TextInputPrompt), With<ServerUrlInput>>,
     username_input: Single<(&TextInputContents, &TextInputPrompt), With<UsernameInput>>,
     room_id_input: Single<(&TextInputContents, &TextInputPrompt), With<RoomIdInput>>,
     mut next_state: ResMut<NextState<GamePhase>>,
 ) {
-    for (interaction, mut color, mut border_color) in &mut interaction_query {
-        match *interaction {
-            Interaction::Pressed => {
-                *color = PRESSED_BUTTON.into();
-                border_color.0 = RED.into();
-                let server_url = if server_url_input.0.get().is_empty() {
-                    server_url_input.1.text.as_str()
-                } else {
-                    server_url_input.0.get()
-                }
-                .to_string();
-
-                let username = if username_input.0.get().is_empty() {
-                    username_input.1.text.as_str()
-                } else {
-                    username_input.0.get()
-                }
-                .to_string();
-
-                let room_id = if room_id_input.0.get().is_empty() {
-                    room_id_input.1.text.as_str()
-                } else {
-                    room_id_input.0.get()
-                }
-                .to_string();
-
-                commands.insert_resource(ConnectionSettings {
-                    server_url: server_url.clone(),
-                    username,
-                });
-
-                let transport = Transport::new_host(&mut commands, server_url, room_id);
-                commands.insert_resource(transport);
-                next_state.set(GamePhase::Connecting);
-            }
-            Interaction::Hovered => {
-                *color = HOVERED_BUTTON.into();
-                border_color.0 = Color::WHITE;
-            }
-            Interaction::None => {
-                *color = NORMAL_BUTTON.into();
-                border_color.0 = Color::BLACK;
-            }
-        }
+    let server_url = if server_url_input.0.get().is_empty() {
+        server_url_input.1.text.as_str()
+    } else {
+        server_url_input.0.get()
     }
+    .to_string();
+
+    let username = if username_input.0.get().is_empty() {
+        username_input.1.text.as_str()
+    } else {
+        username_input.0.get()
+    }
+    .to_string();
+
+    let room_id = if room_id_input.0.get().is_empty() {
+        room_id_input.1.text.as_str()
+    } else {
+        room_id_input.0.get()
+    }
+    .to_string();
+
+    commands.insert_resource(ConnectionSettings {
+        server_url: server_url.clone(),
+        username,
+    });
+
+    let transport = Transport::new_host(&mut commands, server_url, room_id);
+    commands.insert_resource(transport);
+    next_state.set(GamePhase::Connecting);
 }
 
-fn button_system_join_game(
+fn on_join_game(
+    _trigger: Trigger<MenuButtonClicked>,
     mut commands: Commands,
-    mut interaction_query: Query<
-        (&Interaction, &mut BackgroundColor, &mut BorderColor),
-        (Changed<Interaction>, With<JoinGameButton>),
-    >,
     server_url_input: Single<(&TextInputContents, &TextInputPrompt), With<ServerUrlInput>>,
     username_input: Single<(&TextInputContents, &TextInputPrompt), With<UsernameInput>>,
     room_id_input: Single<(&TextInputContents, &TextInputPrompt), With<RoomIdInput>>,
     mut next_state: ResMut<NextState<GamePhase>>,
 ) {
-    for (interaction, mut color, mut border_color) in &mut interaction_query {
-        match *interaction {
-            Interaction::Pressed => {
-                *color = PRESSED_BUTTON.into();
-                border_color.0 = RED.into();
-                let server_url = if server_url_input.0.get().is_empty() {
-                    server_url_input.1.text.as_str()
-                } else {
-                    server_url_input.0.get()
-                }
-                .to_string();
-
-                let username = if username_input.0.get().is_empty() {
-                    username_input.1.text.as_str()
-                } else {
-                    username_input.0.get()
-                }
-                .to_string();
-
-                let room_id = if room_id_input.0.get().is_empty() {
-                    room_id_input.1.text.as_str()
-                } else {
-                    room_id_input.0.get()
-                }
-                .to_string();
-
-                commands.insert_resource(ConnectionSettings {
-                    server_url: server_url.clone(),
-                    username,
-                });
-
-                let transport = Transport::new_client(server_url, room_id);
-                commands.insert_resource(transport);
-                next_state.set(GamePhase::Connecting);
-            }
-            Interaction::Hovered => {
-                *color = HOVERED_BUTTON.into();
-                border_color.0 = Color::WHITE;
-            }
-            Interaction::None => {
-                *color = NORMAL_BUTTON.into();
-                border_color.0 = Color::BLACK;
-            }
-        }
+    let server_url = if server_url_input.0.get().is_empty() {
+        server_url_input.1.text.as_str()
+    } else {
+        server_url_input.0.get()
     }
+    .to_string();
+
+    let username = if username_input.0.get().is_empty() {
+        username_input.1.text.as_str()
+    } else {
+        username_input.0.get()
+    }
+    .to_string();
+
+    let room_id = if room_id_input.0.get().is_empty() {
+        room_id_input.1.text.as_str()
+    } else {
+        room_id_input.0.get()
+    }
+    .to_string();
+
+    commands.insert_resource(ConnectionSettings {
+        server_url: server_url.clone(),
+        username,
+    });
+
+    let transport = Transport::new_client(server_url, room_id);
+    commands.insert_resource(transport);
+    next_state.set(GamePhase::Connecting);
 }

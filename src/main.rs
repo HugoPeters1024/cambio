@@ -12,11 +12,12 @@ mod assets;
 mod cambio;
 mod cards;
 mod client;
+mod host_utils;
 mod menu;
+mod menu_button;
 mod messages;
 mod transport;
 mod utils;
-mod host_utils;
 
 use crate::assets::*;
 use crate::cambio::CambioPlugin;

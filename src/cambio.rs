@@ -623,8 +623,7 @@ pub fn process_single_event(
             // Only reveal the card if we're the one who picked it up
             if let Some(my_player_entity) = my_player.iter().next() {
                 let my_player_id = players.get(my_player_entity).unwrap().0;
-                if my_player_id == actor
-                {
+                if my_player_id == actor {
                     if let Some(known_card) = state.card_lookup.0.get(card_id) {
                         commands.entity(card_entity).insert(*known_card).insert(
                             UnrevealKnownCardTimer(Timer::from_seconds(3.0, TimerMode::Once)),
