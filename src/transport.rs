@@ -32,6 +32,7 @@ pub enum ClaimFromUnreliable {
 #[derive(Resource)]
 pub enum Transport {
     Host {
+        username: String,
         socket_id: Option<PeerId>,
         player_seq: Seq<u8>,
         socket: MatchboxSocket,
@@ -41,13 +42,14 @@ pub enum Transport {
         setup_new_player: SystemId<In<PlayerId>, ()>,
     },
     Client {
+        username: String,
         socket_id: Option<PeerId>,
         socket: MatchboxSocket,
     },
 }
 
 impl Transport {
-    pub fn new_host(commands: &mut Commands, server_url: String, room_id: String) -> Self {
+    pub fn new_host(commands: &mut Commands, username: String, server_url: String, room_id: String) -> Self {
         let rtc_socket = WebRtcSocketBuilder::new(format!("{server_url}/{room_id}?host"))
             .add_reliable_channel()
             .add_unreliable_channel()
@@ -56,6 +58,7 @@ impl Transport {
         let socket = MatchboxSocket::from(rtc_socket);
 
         Transport::Host {
+            username,
             socket_id: None,
             socket,
             player_seq: Seq::default(),
@@ -66,7 +69,7 @@ impl Transport {
         }
     }
 
-    pub fn new_client(server_url: String, room_id: String) -> Self {
+    pub fn new_client(username: String, server_url: String, room_id: String) -> Self {
         let rtc_socket = WebRtcSocketBuilder::new(format!("{server_url}/{room_id}"))
             .add_reliable_channel()
             .add_unreliable_channel()
@@ -74,6 +77,7 @@ impl Transport {
 
         let socket = MatchboxSocket::from(rtc_socket);
         Transport::Client {
+            username,
             socket_id: None,
             socket,
         }
@@ -83,6 +87,13 @@ impl Transport {
         match self {
             Transport::Host { socket_id, .. } => *socket_id,
             Transport::Client { socket_id, .. } => *socket_id,
+        }
+    }
+
+    pub fn username(&self) -> String {
+        match self {
+            Transport::Host { username, .. } => username.clone(),
+            Transport::Client { username, .. } => username.clone(),
         }
     }
 
@@ -359,7 +370,7 @@ fn host_processes_reliable_claims(
                         held_card_id,
                     },
                     ClientClaim::SlapTable => ServerMessage::SlapTable { actor: *claimer_id },
-                    ClientClaim::WantsToPlay { username } => ServerMessage::SetUsername {
+                    ClientClaim::SetUserName { username } => ServerMessage::SetUsername {
                         actor: *claimer_id,
                         username,
                     },

@@ -10,12 +10,6 @@ use crate::cards::*;
 use crate::messages::*;
 use crate::transport::Transport;
 
-#[derive(Resource)]
-pub struct ConnectionSettings {
-    pub server_url: String,
-    pub username: String,
-}
-
 #[derive(Component)]
 struct PlayerTurnIcon;
 
@@ -30,39 +24,6 @@ struct SlapTableButton;
 
 #[derive(Component)]
 struct CursorIconFor(PlayerId);
-
-//pub trait ClientExt {
-//    fn send_claim(&mut self, claim: ClientClaim);
-//
-//    fn send_claim_unreliable(&mut self, claim: ClientClaimUnreliable);
-//}
-//
-//impl ClientExt for Transport {
-//    fn send_claim(&mut self, claim: ClientClaim) {
-//        let encoded = bincode::serde::encode_to_vec(&claim, bincode::config::standard())
-//            .unwrap()
-//            .into_boxed_slice();
-//
-//        let peers = self.connected_peers().collect::<Vec<_>>();
-//
-//        assert!(peers.len() == 1);
-//        self.channel_mut(RELIABLE_CHANNEL).send(encoded, peers[0]);
-//    }
-//
-//    fn send_claim_unreliable(&mut self, claim: ClientClaimUnreliable) {
-//        let encoded = bincode::serde::encode_to_vec(&claim, bincode::config::standard())
-//            .unwrap()
-//            .into_boxed_slice();
-//
-//        let peers = self.connected_peers().collect::<Vec<_>>();
-//
-//        assert!(peers.len() <= 1);
-//        for peer in peers {
-//            self.channel_mut(UNRELIABLE_CHANNEL)
-//                .send(encoded.clone(), peer);
-//        }
-//    }
-//}
 
 pub struct ClientPlugin;
 
@@ -154,7 +115,7 @@ fn on_player_spawn(
     trigger: Trigger<OnAdd, PlayerId>,
     player_ids: Query<&PlayerId>,
     mut commands: Commands,
-    client: ResMut<Transport>,
+    mut client: ResMut<Transport>,
     mut window: Single<&mut Window, With<PrimaryWindow>>,
     assets: Res<GameAssets>,
 ) {
@@ -165,10 +126,10 @@ fn on_player_spawn(
     if player_id.peer_id == client.socket_id().unwrap() {
         commands.entity(trigger.target()).insert(MyPlayer);
         window.cursor_options.visible = false;
-
-        //client.queue_claim(ClientClaim::WantsToPlay {
-        //    username: connection_settings.username.clone(),
-        //});
+        let claim = ClientClaim::SetUserName {
+            username: client.username(),
+        };
+        client.queue_claim(claim);
     }
 
     // spawn cursor
@@ -287,67 +248,6 @@ fn update_player_turn_state(
         turn_description
     );
 }
-
-//fn client_sync_players(
-//    mut commands: Commands,
-//    state: Single<(Entity, &CambioState)>,
-//    mut players: Query<&mut PlayerState>,
-//    me: Query<&MyPlayer>,
-//    mut cursors: Query<(&mut Transform, &CursorIconFor)>,
-//    mut client: ResMut<Transport>,
-//) {
-//    let (root, state) = *state;
-//    for (peer_id, peer_state) in client.update_peers() {
-//        match peer_state {
-//            PeerState::Connected => println!("Connected to peer {peer_id}"),
-//            PeerState::Disconnected => println!("Disconnected from peer {peer_id}"),
-//        }
-//    }
-//    for (_, message) in client.channel_mut(RELIABLE_CHANNEL).receive() {
-//        let server_message: ServerMessage =
-//            bincode::serde::decode_from_slice(&message, bincode::config::standard())
-//                .unwrap()
-//                .0;
-//
-//        commands.run_system_cached_with(
-//            process_single_event.pipe(|_: In<bool>| ()),
-//            (root, server_message),
-//        );
-//    }
-//
-//    for (_peer_id, message) in client.channel_mut(UNRELIABLE_CHANNEL).receive() {
-//        let message: ServerMessageUnreliable =
-//            bincode::serde::decode_from_slice(&message, bincode::config::standard())
-//                .unwrap()
-//                .0;
-//        match message {
-//            ServerMessageUnreliable::MousePositions(items) => {
-//                for (player_id, mouse_pos) in items.iter() {
-//                    if state.player_index.get(player_id).is_none() {
-//                        continue;
-//                    }
-//                    if me.contains(state.player_index[player_id]) {
-//                        // We use the local mouse position to reduce
-//                        // visual latency
-//                        continue;
-//                    }
-//
-//                    if let Ok(mut player_state) = players.get_mut(state.player_index[player_id]) {
-//                        player_state.last_mouse_pos_world = *mouse_pos;
-//                    }
-//                }
-//
-//                let lookup = items.iter().cloned().collect::<HashMap<_, _>>();
-//                for (mut t, CursorIconFor(target)) in cursors.iter_mut() {
-//                    if let Some(mouse_pos) = lookup.get(target) {
-//                        t.translation.x = mouse_pos.x;
-//                        t.translation.y = mouse_pos.y;
-//                    }
-//                }
-//            }
-//        }
-//    }
-//}
 
 fn set_and_publish_cursor_position(
     mut me: Single<&mut PlayerState, With<MyPlayer>>,

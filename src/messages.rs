@@ -11,7 +11,7 @@ pub const UNRELIABLE_CHANNEL: usize = 1;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ClientClaim {
-    WantsToPlay {
+    SetUserName {
         username: String,
     },
     PickUpSlotCard {

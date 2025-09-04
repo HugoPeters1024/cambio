@@ -3,7 +3,6 @@ use bevy_ui_text_input::{TextInputContents, TextInputMode, TextInputNode, TextIn
 
 use crate::{
     assets::GamePhase,
-    client::ConnectionSettings,
     menu_button::{MenuButton, MenuButtonClicked, MenuButtonPlugin},
     transport::Transport,
 };
@@ -261,12 +260,7 @@ fn on_host_game(
     }
     .to_string();
 
-    commands.insert_resource(ConnectionSettings {
-        server_url: server_url.clone(),
-        username,
-    });
-
-    let transport = Transport::new_host(&mut commands, server_url, room_id);
+    let transport = Transport::new_host(&mut commands, username, server_url, room_id);
     commands.insert_resource(transport);
     next_state.set(GamePhase::Connecting);
 }
@@ -300,12 +294,7 @@ fn on_join_game(
     }
     .to_string();
 
-    commands.insert_resource(ConnectionSettings {
-        server_url: server_url.clone(),
-        username,
-    });
-
-    let transport = Transport::new_client(server_url, room_id);
+    let transport = Transport::new_client(username, server_url, room_id);
     commands.insert_resource(transport);
     next_state.set(GamePhase::Connecting);
 }
