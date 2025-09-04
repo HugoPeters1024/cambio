@@ -7,7 +7,6 @@ use crate::{
     cambio::*,
     cards::{KnownCard, Rank, Suit},
     messages::*,
-    server::ServerExt,
     transport::Transport,
     utils::Seq,
 };
@@ -60,7 +59,15 @@ pub fn host_eval_event(
                     .keys()
                     .find(|player_id| player_id.peer_id == *peer_id)
                     .unwrap();
-                socket.send_message_typed(*peer_id, msg.redacted_for(player_id));
+
+                let packet = bincode::serde::encode_to_vec(
+                    &msg.redacted_for(player_id),
+                    bincode::config::standard(),
+                )
+                .unwrap()
+                .into_boxed_slice();
+
+                socket.channel_mut(RELIABLE_CHANNEL).send(packet, *peer_id);
             }
             accepted_history.push(msg.clone());
         };
@@ -119,8 +126,15 @@ pub fn setup_new_player(
     // Replay the history if the target is not the host itself
     if player_id.peer_id != socket.id().unwrap() {
         for msg in accepted_history.iter() {
-            info!("Replaying: {msg:?}");
-            socket.send_message_typed(player_id.peer_id, msg.redacted_for(&player_id));
+            let packet = bincode::serde::encode_to_vec(
+                &msg.redacted_for(&player_id),
+                bincode::config::standard(),
+            )
+            .unwrap()
+            .into_boxed_slice();
+            socket
+                .channel_mut(RELIABLE_CHANNEL)
+                .send(packet, player_id.peer_id);
         }
     }
 

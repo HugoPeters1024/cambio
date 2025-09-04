@@ -7,9 +7,14 @@ use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
 use rand::Rng;
 
 use crate::{
-    assets::GamePhase, cambio::{process_single_event, CambioState, PlayerId, PlayerState}, host_utils::host_eval_event, messages::{
-        ClientClaim, ClientClaimUnreliable, ServerMessage, ServerMessageUnreliable, RELIABLE_CHANNEL, UNRELIABLE_CHANNEL
-    }, server::ServerExt, utils::Seq
+    assets::GamePhase,
+    cambio::{CambioState, PlayerId, PlayerState, process_single_event},
+    host_utils::host_eval_event,
+    messages::{
+        ClientClaim, ClientClaimUnreliable, RELIABLE_CHANNEL, ServerMessage,
+        ServerMessageUnreliable, UNRELIABLE_CHANNEL,
+    },
+    utils::Seq,
 };
 
 pub struct TransportPlugin;
@@ -138,6 +143,7 @@ impl Plugin for TransportPlugin {
             Update,
             (
                 both_sync_peers,
+                host_receives_claims_from_clients,
                 host_processes_reliable_claims,
                 host_processes_unreliable_claims,
                 client_receives_reliable_results,
@@ -232,6 +238,36 @@ fn both_sync_peers(mut commands: Commands, transport: ResMut<Transport>) {
                         warn!("A clien disconnected: {peer_id}");
                     }
                 }
+            }
+        }
+    }
+}
+
+fn host_receives_claims_from_clients(transport: ResMut<Transport>) {
+    match transport.into_inner() {
+        Transport::Client { .. } => {}
+        Transport::Host {
+            socket,
+            incoming_claims,
+            incoming_claims_unreliable,
+            ..
+        } => {
+            for (peer_id, claim) in socket.channel_mut(RELIABLE_CHANNEL).receive() {
+                let claim: ClientClaim =
+                    bincode::serde::decode_from_slice(&claim, bincode::config::standard())
+                        .unwrap()
+                        .0;
+
+                incoming_claims.push(ClaimFrom::Client(peer_id, claim));
+            }
+
+            for (peer_id, claim) in socket.channel_mut(UNRELIABLE_CHANNEL).receive() {
+                let claim: ClientClaimUnreliable =
+                    bincode::serde::decode_from_slice(&claim, bincode::config::standard())
+                        .unwrap()
+                        .0;
+
+                incoming_claims_unreliable.push(ClaimFromUnreliable::Client(peer_id, claim));
             }
         }
     }

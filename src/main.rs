@@ -14,7 +14,6 @@ mod cards;
 mod client;
 mod menu;
 mod messages;
-mod server;
 mod transport;
 mod utils;
 mod host_utils;
