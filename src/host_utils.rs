@@ -42,15 +42,10 @@ pub fn host_eval_event(
         transport: ResMut<Transport>,
         state: Single<&CambioState>,
     ) {
-        let Transport::Host {
-            socket,
-            accepted_history,
-            ..
-        } = transport.into_inner()
-        else {
+        let Transport::Host(host) = transport.into_inner() else {
             panic!("impossible");
         };
-        let peers = socket.connected_peers().collect::<Vec<_>>();
+        let peers = host.socket.connected_peers().collect::<Vec<_>>();
 
         let mut go = |msg: ServerMessage| {
             for peer_id in peers.iter() {
@@ -67,9 +62,11 @@ pub fn host_eval_event(
                 .unwrap()
                 .into_boxed_slice();
 
-                socket.channel_mut(RELIABLE_CHANNEL).send(packet, *peer_id);
+                host.socket
+                    .channel_mut(RELIABLE_CHANNEL)
+                    .send(packet, *peer_id);
             }
-            accepted_history.push(msg.clone());
+            host.accepted_history.push(msg.clone());
         };
 
         match *msg {
@@ -114,25 +111,20 @@ pub fn setup_new_player(
     state: Single<&CambioState>,
     transport: ResMut<Transport>,
 ) {
-    let Transport::Host {
-        socket,
-        accepted_history,
-        ..
-    } = transport.into_inner()
-    else {
+    let Transport::Host(host) = transport.into_inner() else {
         panic!("impossible");
     };
 
     // Replay the history if the target is not the host itself
-    if player_id.peer_id != socket.id().unwrap() {
-        for msg in accepted_history.iter() {
+    if player_id.peer_id != host.socket.id().unwrap() {
+        for msg in host.accepted_history.iter() {
             let packet = bincode::serde::encode_to_vec(
                 &msg.redacted_for(&player_id),
                 bincode::config::standard(),
             )
             .unwrap()
             .into_boxed_slice();
-            socket
+            host.socket
                 .channel_mut(RELIABLE_CHANNEL)
                 .send(packet, player_id.peer_id);
         }
