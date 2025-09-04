@@ -146,15 +146,14 @@ fn handle_unreveal_timer(
     }
 }
 
-pub fn spawn_cambio_root(
-    mut commands: Commands,
-) {
+pub fn spawn_cambio_root(mut commands: Commands) {
     let discard_pile = commands
         .spawn((Name::new("Discard Pile"), DiscardPile))
         .id();
 
     let root = commands
-        .spawn(( Name::new("Cambio"),
+        .spawn((
+            Name::new("Cambio"),
             InheritedVisibility::default(),
             Transform::default(),
             CambioRoot,
@@ -180,6 +179,7 @@ pub fn process_single_event(
     mut states: Query<&mut CambioState>,
     mut players: Query<(&PlayerId, &mut PlayerState)>,
     held: Query<(Entity, &IsHeldBy)>,
+    my_player: Query<Entity, With<MyPlayer>>,
     taken_from_slot: Query<&TakenFromSlot>,
     card_ids: Query<&CardId>,
     known_cards: Query<&KnownCard>,
@@ -620,14 +620,17 @@ pub fn process_single_event(
                 }
             }
 
-            if let Some(known_card) = state.card_lookup.0.get(card_id) {
-                commands
-                    .entity(card_entity)
-                    .insert(*known_card)
-                    .insert(UnrevealKnownCardTimer(Timer::from_seconds(
-                        3.0,
-                        TimerMode::Once,
-                    )));
+            // Only reveal the card if we're the one who picked it up
+            if let Some(my_player_entity) = my_player.iter().next() {
+                let my_player_id = players.get(my_player_entity).unwrap().0;
+                if my_player_id == actor
+                {
+                    if let Some(known_card) = state.card_lookup.0.get(card_id) {
+                        commands.entity(card_entity).insert(*known_card).insert(
+                            UnrevealKnownCardTimer(Timer::from_seconds(3.0, TimerMode::Once)),
+                        );
+                    }
+                }
             }
         }
         ServerMessage::TakeFreshCardFromDeck { actor, card_id } => {
@@ -955,7 +958,7 @@ pub fn process_single_event(
                     .insert(TakenFromSlot(*slot_id));
             }
         }
-        ServerMessage::FinishedReplayingHistory {..} => {},
+        ServerMessage::FinishedReplayingHistory { .. } => {}
         ServerMessage::PublishCardPublically { card_id, value } => {
             state.card_lookup.0.insert(*card_id, *value);
         }

@@ -661,7 +661,6 @@ fn on_message_accepted(
 
                 let mut final_scores = final_scores.iter().collect::<Vec<_>>();
                 final_scores.sort_by_key(|(_, score)| *score);
-                final_scores.reverse();
 
                 commands
                     .spawn((

@@ -12,7 +12,6 @@ use crate::{
 
 mod state;
 mod topology;
-mod host;
 
 fn setup_logging() {
     tracing_subscriber::registry()

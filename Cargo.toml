@@ -7,7 +7,7 @@ edition = "2024"
 exclude = ["dist", "build", "assets", "credits"]
 
 [workspace]
-members = ["crates/cambio_logic", "crates/signaling","mobile"]
+members = ["crates/signaling","mobile"]
 
 [profile.dev.package."*"]
 opt-level = 3
