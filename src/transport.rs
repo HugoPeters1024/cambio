@@ -47,8 +47,8 @@ pub enum Transport {
 }
 
 impl Transport {
-    pub fn new_host(commands: &mut Commands, server_url: String) -> Self {
-        let rtc_socket = WebRtcSocketBuilder::new(format!("{server_url}/?host"))
+    pub fn new_host(commands: &mut Commands, server_url: String, room_id: String) -> Self {
+        let rtc_socket = WebRtcSocketBuilder::new(format!("{server_url}/{room_id}?host"))
             .add_reliable_channel()
             .add_unreliable_channel()
             .build();
@@ -66,8 +66,8 @@ impl Transport {
         }
     }
 
-    pub fn new_client(server_url: String) -> Self {
-        let rtc_socket = WebRtcSocketBuilder::new(server_url)
+    pub fn new_client(server_url: String, room_id: String) -> Self {
+        let rtc_socket = WebRtcSocketBuilder::new(format!("{server_url}/{room_id}"))
             .add_reliable_channel()
             .add_unreliable_channel()
             .build();

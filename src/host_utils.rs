@@ -16,6 +16,7 @@ pub fn host_eval_event(
     mut commands: Commands,
     state: Single<(Entity, &mut CambioState)>,
     mut entropy: GlobalEntropy<WyRand>,
+    me: Query<&PlayerId, With<MyPlayer>>,
 ) {
     let (root, mut state) = state.into_inner();
 

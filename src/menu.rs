@@ -25,6 +25,9 @@ pub struct MenuRoot;
 pub struct ServerUrlInput;
 
 #[derive(Component)]
+pub struct RoomIdInput;
+
+#[derive(Component)]
 pub struct UsernameInput;
 
 #[derive(Component)]
@@ -111,7 +114,7 @@ fn setup_menu(mut commands: Commands) {
                             ..default()
                         },
                         ServerUrlInput
-                    )
+                    ),
                 ],
             ));
 
@@ -155,6 +158,50 @@ fn setup_menu(mut commands: Commands) {
                         },
                         TextInputContents::default(),
                         UsernameInput
+                    )
+                ],
+            ));
+
+            input_section.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    padding: UiRect::vertical(Val::Px(5.0)),
+                    ..default()
+                },
+                children![
+                    (
+                        Text::new("room id"),
+                        Node {
+                            width: Val::Percent(30.0),
+                            padding: UiRect::right(Val::Px(10.0)),
+                            ..default()
+                        }
+                    ),
+                    (
+                        BackgroundColor(BLACK.into()),
+                        Node {
+                            width: Val::Percent(70.0),
+                            height: Val::Px(45.0),
+                            padding: UiRect::all(Val::Px(5.0)),
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },
+                        BorderRadius::all(Val::Px(5.0)),
+                        TextInputNode {
+                            mode: TextInputMode::SingleLine,
+                            clear_on_submit: false,
+                            ..default()
+                        },
+                        TextInputPrompt {
+                            text: "12345".to_string(),
+                            ..default()
+                        },
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextInputContents::default(),
+                        RoomIdInput
                     )
                 ],
             ));
@@ -232,6 +279,7 @@ fn button_system_host_game(
     >,
     server_url_input: Single<(&TextInputContents, &TextInputPrompt), With<ServerUrlInput>>,
     username_input: Single<(&TextInputContents, &TextInputPrompt), With<UsernameInput>>,
+    room_id_input: Single<(&TextInputContents, &TextInputPrompt), With<RoomIdInput>>,
     mut next_state: ResMut<NextState<GamePhase>>,
 ) {
     for (interaction, mut color, mut border_color) in &mut interaction_query {
@@ -253,12 +301,19 @@ fn button_system_host_game(
                 }
                 .to_string();
 
+                let room_id = if room_id_input.0.get().is_empty() {
+                    room_id_input.1.text.as_str()
+                } else {
+                    room_id_input.0.get()
+                }
+                .to_string();
+
                 commands.insert_resource(ConnectionSettings {
                     server_url: server_url.clone(),
                     username,
                 });
 
-                let transport = Transport::new_host(&mut commands, server_url);
+                let transport = Transport::new_host(&mut commands, server_url, room_id);
                 commands.insert_resource(transport);
                 next_state.set(GamePhase::Connecting);
             }
@@ -282,6 +337,7 @@ fn button_system_join_game(
     >,
     server_url_input: Single<(&TextInputContents, &TextInputPrompt), With<ServerUrlInput>>,
     username_input: Single<(&TextInputContents, &TextInputPrompt), With<UsernameInput>>,
+    room_id_input: Single<(&TextInputContents, &TextInputPrompt), With<RoomIdInput>>,
     mut next_state: ResMut<NextState<GamePhase>>,
 ) {
     for (interaction, mut color, mut border_color) in &mut interaction_query {
@@ -303,12 +359,19 @@ fn button_system_join_game(
                 }
                 .to_string();
 
+                let room_id = if room_id_input.0.get().is_empty() {
+                    room_id_input.1.text.as_str()
+                } else {
+                    room_id_input.0.get()
+                }
+                .to_string();
+
                 commands.insert_resource(ConnectionSettings {
                     server_url: server_url.clone(),
                     username,
                 });
 
-                let transport = Transport::new_client(server_url);
+                let transport = Transport::new_client(server_url, room_id);
                 commands.insert_resource(transport);
                 next_state.set(GamePhase::Connecting);
             }
