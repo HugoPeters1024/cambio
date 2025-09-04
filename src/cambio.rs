@@ -146,14 +146,15 @@ fn handle_unreveal_timer(
     }
 }
 
-pub fn spawn_cambio_root(mut commands: Commands) {
+pub fn spawn_cambio_root(
+    mut commands: Commands,
+) {
     let discard_pile = commands
         .spawn((Name::new("Discard Pile"), DiscardPile))
         .id();
 
     let root = commands
-        .spawn((
-            Name::new("Cambio"),
+        .spawn(( Name::new("Cambio"),
             InheritedVisibility::default(),
             Transform::default(),
             CambioRoot,
@@ -188,13 +189,13 @@ pub fn process_single_event(
     immunity: Query<&HasImmunity>,
     mut player_at_turn: Query<(Entity, &mut PlayerAtTurn)>,
     mut commands: Commands,
-) -> bool {
-    println!("Processing message: {:?}", msg);
+) -> Option<ServerMessage> {
+    info!("Processing message: {:?}", msg);
 
     macro_rules! reject {
         ($($arg:tt)*) => {
             warn!($($arg)*);
-            return false;
+            return None;
         };
     }
 
@@ -953,7 +954,7 @@ pub fn process_single_event(
                     .insert(TakenFromSlot(*slot_id));
             }
         }
-        ServerMessage::FinishedReplayingHistory => {}
+        ServerMessage::FinishedReplayingHistory {..} => {},
         ServerMessage::PublishCardPublically { card_id, value } => {
             state.card_lookup.0.insert(*card_id, *value);
         }
@@ -1060,8 +1061,8 @@ pub fn process_single_event(
     }
 
     // If we're still here then we accepted the message.
-    state.message_drain.accepted.push_back(msg);
-    true
+    state.message_drain.accepted.push_back(msg.clone());
+    Some(msg)
 }
 
 #[cfg(test)]
@@ -1162,6 +1163,7 @@ mod tests {
             self.world
                 .run_system_cached_with(process_single_event, (self.root, event.clone()))
                 .unwrap()
+                .is_some()
         }
 
         fn with_all_cards_known(mut self) -> TestSetup {

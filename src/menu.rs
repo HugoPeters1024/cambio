@@ -1,7 +1,7 @@
 use bevy::{color::palettes::css::*, prelude::*};
 use bevy_ui_text_input::{TextInputContents, TextInputMode, TextInputNode, TextInputPrompt};
 
-use crate::{assets::GamePhase, client::ConnectionSettings};
+use crate::{assets::GamePhase, client::ConnectionSettings, transport::Transport};
 
 const NORMAL_BUTTON: Color = Color::srgb(0.15, 0.15, 0.15);
 const HOVERED_BUTTON: Color = Color::srgb(0.25, 0.25, 0.25);
@@ -28,7 +28,10 @@ pub struct ServerUrlInput;
 pub struct UsernameInput;
 
 #[derive(Component)]
-pub struct StartButton;
+pub struct HostGameButton;
+
+#[derive(Component)]
+pub struct JoinGameButton;
 
 fn setup_menu(mut commands: Commands) {
     commands.spawn((
@@ -161,7 +164,7 @@ fn setup_menu(mut commands: Commands) {
     commands.spawn((
         ChildOf(root),
         Button,
-        StartButton,
+        HostGameButton,
         Node {
             width: Val::Px(180.0),
             height: Val::Px(65.0),
@@ -176,7 +179,35 @@ fn setup_menu(mut commands: Commands) {
         BorderRadius::MAX,
         BackgroundColor(NORMAL_BUTTON),
         children![(
-            Text::new("Play Cambio"),
+            Text::new("Host Game"),
+            TextFont {
+                font_size: 21.0,
+                ..default()
+            },
+            TextColor(Color::srgb(0.9, 0.9, 0.9)),
+            TextShadow::default(),
+        )],
+    ));
+
+    commands.spawn((
+        ChildOf(root),
+        Button,
+        JoinGameButton,
+        Node {
+            width: Val::Px(180.0),
+            height: Val::Px(65.0),
+            border: UiRect::all(Val::Px(5.0)),
+            // horizontally center child text
+            justify_content: JustifyContent::Center,
+            // vertically center child text
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BorderColor(Color::BLACK),
+        BorderRadius::MAX,
+        BackgroundColor(NORMAL_BUTTON),
+        children![(
+            Text::new("Join Game"),
             TextFont {
                 font_size: 21.0,
                 ..default()
@@ -197,7 +228,7 @@ fn button_system(
     mut commands: Commands,
     mut interaction_query: Query<
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
-        (Changed<Interaction>, With<Button>),
+        (Changed<Interaction>, With<HostGameButton>),
     >,
     server_url_input: Single<(&TextInputContents, &TextInputPrompt), With<ServerUrlInput>>,
     username_input: Single<(&TextInputContents, &TextInputPrompt), With<UsernameInput>>,
@@ -223,10 +254,13 @@ fn button_system(
                 .to_string();
 
                 commands.insert_resource(ConnectionSettings {
-                    server_url,
+                    server_url: server_url.clone(),
                     username,
                 });
-                next_state.set(GamePhase::Playing);
+
+                let transport = Transport::new_host(&mut commands, server_url);
+                commands.insert_resource(transport);
+                next_state.set(GamePhase::Connecting);
             }
             Interaction::Hovered => {
                 *color = HOVERED_BUTTON.into();

@@ -8,15 +8,20 @@ use strum::IntoEnumIterator;
 
 use crate::cambio::*;
 use crate::cards::*;
+use crate::host_utils::give_card_to_player;
 use crate::messages::*;
 use crate::utils::Seq;
 
-trait ServerExt {
+pub trait ServerExt {
     fn send_message_typed(&mut self, client_id: PeerId, message: ServerMessage);
 }
 
 impl ServerExt for MatchboxSocket {
     fn send_message_typed(&mut self, peer_id: PeerId, message: ServerMessage) {
+        debug_assert!(
+            self.id() != Some(peer_id),
+            "Loopback detected, sending message to self"
+        );
         let encoded = bincode::serde::encode_to_vec(message, bincode::config::standard())
             .unwrap()
             .into_boxed_slice();
@@ -46,12 +51,7 @@ impl Plugin for ServerPlugin {
 
         app.add_systems(
             Startup,
-            (
-                start_socket,
-                spawn_cambio_root,
-                decide_on_card_values,
-            )
-                .chain(),
+            (start_socket, spawn_cambio_root, decide_on_card_values).chain(),
         );
     }
 }
@@ -97,43 +97,11 @@ fn server_update_system(
     let (root, state) = *state;
 
     fn trigger_event(commands: &mut Commands, msg: ServerMessage, root: &Entity) {
-        commands.run_system_cached_with(process_single_event.pipe(|_: In<bool>| ()), (*root, msg));
-        commands.run_system_cached_with(trigger_server_events, *root);
-    }
-
-    fn give_card_to_player(
-        In((player_id, slot_id, reveal)): In<(PlayerId, SlotId, bool)>,
-        mut commands: Commands,
-        state: Single<(Entity, &CambioState)>,
-    ) {
-        let (root, state) = *state;
-        let front_card = state.free_cards[0];
         commands.run_system_cached_with(
-            process_single_event.pipe(|_: In<bool>| ()),
-            (
-                root,
-                ServerMessage::ReceiveFreshCardFromDeck {
-                    actor: player_id,
-                    slot_id,
-                    card_id: front_card,
-                },
-            ),
+            process_single_event.pipe(|_: In<Option<ServerMessage>>| ()),
+            (*root, msg),
         );
-
-        if reveal {
-            commands.run_system_cached_with(
-                process_single_event.pipe(|_: In<bool>| ()),
-                (
-                    root,
-                    ServerMessage::RevealCardAtSlot {
-                        actor: player_id,
-                        slot_id,
-                        card_id: front_card,
-                        check_turn: false,
-                    },
-                ),
-            );
-        };
+        commands.run_system_cached_with(trigger_server_events, *root);
     }
 
     for (peer_id, peer_state) in server.update_peers() {
@@ -148,7 +116,10 @@ fn server_update_system(
                 for msg in accepted_history.0.iter() {
                     server.send_message_typed(peer_id, msg.redacted_for(&player_id));
                 }
-                server.send_message_typed(peer_id, ServerMessage::FinishedReplayingHistory);
+                server.send_message_typed(
+                    peer_id,
+                    ServerMessage::FinishedReplayingHistory { player_id },
+                );
                 trigger_event(
                     &mut commands,
                     ServerMessage::PlayerConnected { player_id },
@@ -258,7 +229,7 @@ fn server_update_system(
                 held_card_id,
             },
             ClientClaim::SlapTable => ServerMessage::SlapTable { actor: *claimer_id },
-            ClientClaim::SetUsername { username } => ServerMessage::SetUsername {
+            ClientClaim::WantsToPlay { username } => ServerMessage::SetUsername {
                 actor: *claimer_id,
                 username,
             },
@@ -327,7 +298,7 @@ fn trigger_server_events(
     if state.free_cards.is_empty() {
         commands.run_system_cached_with(
             // TODO: actually update the card value lookup
-            process_single_event.pipe(|_: In<bool>| ()),
+            process_single_event.pipe(|_: In<Option<ServerMessage>>| ()),
             (
                 *root,
                 ServerMessage::ShuffleDiscardPile {
@@ -382,7 +353,7 @@ fn trigger_server_events(
             };
 
             commands.run_system_cached_with(
-                process_single_event.pipe(|_: In<bool>| ()),
+                process_single_event.pipe(|_: In<Option<ServerMessage>>| ()),
                 (*root, event),
             );
         }

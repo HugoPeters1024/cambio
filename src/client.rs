@@ -1,8 +1,6 @@
 use std::time::Duration;
 
-use bevy::platform::collections::HashMap;
 use bevy::{prelude::*, window::PrimaryWindow};
-use bevy_matchbox::prelude::*;
 use bevy_tweening::lens::TransformRotateZLens;
 use bevy_tweening::{Animator, RepeatCount, RepeatStrategy, Tween, lens::*};
 
@@ -10,6 +8,7 @@ use crate::assets::*;
 use crate::cambio::*;
 use crate::cards::*;
 use crate::messages::*;
+use crate::transport::Transport;
 
 #[derive(Resource)]
 pub struct ConnectionSettings {
@@ -32,123 +31,43 @@ struct SlapTableButton;
 #[derive(Component)]
 struct CursorIconFor(PlayerId);
 
-pub trait ClientExt {
-    fn send_claim(&mut self, claim: ClientClaim);
-
-    fn send_claim_unreliable(&mut self, claim: ClientClaimUnreliable);
-}
-
-impl ClientExt for MatchboxSocket {
-    fn send_claim(&mut self, claim: ClientClaim) {
-        let encoded = bincode::serde::encode_to_vec(&claim, bincode::config::standard())
-            .unwrap()
-            .into_boxed_slice();
-
-        let peers = self.connected_peers().collect::<Vec<_>>();
-
-        assert!(peers.len() == 1);
-        self.channel_mut(RELIABLE_CHANNEL).send(encoded, peers[0]);
-    }
-
-    fn send_claim_unreliable(&mut self, claim: ClientClaimUnreliable) {
-        let encoded = bincode::serde::encode_to_vec(&claim, bincode::config::standard())
-            .unwrap()
-            .into_boxed_slice();
-
-        let peers = self.connected_peers().collect::<Vec<_>>();
-
-        assert!(peers.len() <= 1);
-        for peer in peers {
-            self.channel_mut(UNRELIABLE_CHANNEL)
-                .send(encoded.clone(), peer);
-        }
-    }
-}
+//pub trait ClientExt {
+//    fn send_claim(&mut self, claim: ClientClaim);
+//
+//    fn send_claim_unreliable(&mut self, claim: ClientClaimUnreliable);
+//}
+//
+//impl ClientExt for Transport {
+//    fn send_claim(&mut self, claim: ClientClaim) {
+//        let encoded = bincode::serde::encode_to_vec(&claim, bincode::config::standard())
+//            .unwrap()
+//            .into_boxed_slice();
+//
+//        let peers = self.connected_peers().collect::<Vec<_>>();
+//
+//        assert!(peers.len() == 1);
+//        self.channel_mut(RELIABLE_CHANNEL).send(encoded, peers[0]);
+//    }
+//
+//    fn send_claim_unreliable(&mut self, claim: ClientClaimUnreliable) {
+//        let encoded = bincode::serde::encode_to_vec(&claim, bincode::config::standard())
+//            .unwrap()
+//            .into_boxed_slice();
+//
+//        let peers = self.connected_peers().collect::<Vec<_>>();
+//
+//        assert!(peers.len() <= 1);
+//        for peer in peers {
+//            self.channel_mut(UNRELIABLE_CHANNEL)
+//                .send(encoded.clone(), peer);
+//        }
+//    }
+//}
 
 pub struct ClientPlugin;
 
 impl Plugin for ClientPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            PostUpdate,
-            ((
-                client_sync_players,
-                set_and_publish_cursor_position,
-                sync_held_by,
-            )
-                .chain())
-            .run_if(in_state(GamePhase::Playing)),
-        );
-
-        fn on_player_spawn(
-            trigger: Trigger<OnAdd, PlayerId>,
-            player_ids: Query<&PlayerId>,
-            mut commands: Commands,
-            mut client: ResMut<MatchboxSocket>,
-            mut window: Single<&mut Window, With<PrimaryWindow>>,
-            assets: Res<GameAssets>,
-            connection_settings: Res<ConnectionSettings>,
-        ) {
-            let player_id = *player_ids.get(trigger.target()).unwrap();
-
-            // Mark this player as the local player and send
-            // a claim to update our username
-            if player_id.peer_id == client.id().unwrap() {
-                commands.entity(trigger.target()).insert(MyPlayer);
-                window.cursor_options.visible = false;
-
-                client.send_claim(ClientClaim::SetUsername {
-                    username: connection_settings.username.clone(),
-                });
-            }
-
-            // spawn cursor
-            commands.spawn((
-                CursorIconFor(player_id),
-                Sprite::from_image(assets.cursor_sprite.clone()),
-                Transform::from_scale(Vec3::new(0.1, 0.1, 1.0))
-                    .with_translation(Vec3::new(0.0, 0.0, 100.0)),
-            ));
-
-            commands
-                .entity(trigger.target())
-                .with_child((
-                    PlayerNameText,
-                    Text2d::new(format!("Player {}", player_id.player_number())),
-                    TextFont::from_font_size(14.0),
-                    Transform::from_xyz(
-                        0.0,
-                        (DESIRED_CARD_HEIGHT + 15.0) * player_id.up_or_down(),
-                        1.0,
-                    ),
-                    TextColor(Color::WHITE),
-                ))
-                .observe(
-                    |trigger: Trigger<OnAdd, HasImmunity>,
-                     mut commands: Commands,
-                     assets: Res<GameAssets>| {
-                        commands.entity(trigger.target()).with_child((
-                            Sprite::from_image(assets.locked_sprite.clone()),
-                            Transform::from_translation(Vec3::new(0.0, 0.0, 10.0))
-                                .with_scale(Vec3::splat(0.2)),
-                        ));
-                    },
-                );
-        }
-
-        fn on_discard_pile_spawn(trigger: Trigger<OnAdd, DiscardPile>, mut commands: Commands) {
-            commands.entity(trigger.target()).insert((
-                Name::new("Discard Pile"),
-                GrowOnHover,
-                Transform::from_xyz(0.0, 0.0, 0.0),
-                Sprite::from_color(
-                    Color::srgb(0.0, 0.0, 0.2),
-                    Vec2::new(DESIRED_CARD_WIDTH, DESIRED_CARD_HEIGHT),
-                ),
-                Pickable::default(),
-            ));
-        }
-
         app.add_observer(on_player_spawn);
         app.add_observer(on_discard_pile_spawn);
         app.add_observer(click_slot_card);
@@ -157,8 +76,20 @@ impl Plugin for ClientPlugin {
 
         app.add_systems(
             OnEnter(GamePhase::Playing),
-            (start_socket, spawn_cambio_root, setup).chain(),
+            (spawn_cambio_root, setup).chain(),
         );
+
+        app.add_systems(
+            Update,
+            ((
+                set_and_publish_cursor_position,
+                sync_cursors_from_state,
+                sync_held_by,
+            )
+                .chain())
+            .run_if(in_state(GamePhase::Playing)),
+        );
+
         app.add_systems(Update, update_player_turn_state);
         app.add_systems(
             Update,
@@ -168,15 +99,6 @@ impl Plugin for ClientPlugin {
             ),
         );
     }
-}
-
-fn start_socket(mut commands: Commands, connection_settings: Res<ConnectionSettings>) {
-    let rtc_socket = WebRtcSocketBuilder::new(&connection_settings.server_url)
-        .add_reliable_channel()
-        .add_unreliable_channel()
-        .build();
-    let socket = MatchboxSocket::from(rtc_socket);
-    commands.insert_resource(socket);
 }
 
 fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: Res<GameAssets>) {
@@ -222,10 +144,93 @@ fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: 
             GrowOnHover,
         ))
         .observe(
-            |_: Trigger<Pointer<Click>>, mut client: ResMut<MatchboxSocket>| {
-                client.send_claim(ClientClaim::SlapTable);
+            |_: Trigger<Pointer<Click>>, mut client: ResMut<Transport>| {
+                client.queue_claim(ClientClaim::SlapTable);
             },
         );
+}
+
+fn on_player_spawn(
+    trigger: Trigger<OnAdd, PlayerId>,
+    player_ids: Query<&PlayerId>,
+    mut commands: Commands,
+    client: ResMut<Transport>,
+    mut window: Single<&mut Window, With<PrimaryWindow>>,
+    assets: Res<GameAssets>,
+) {
+    let player_id = *player_ids.get(trigger.target()).unwrap();
+
+    // Mark this player as the local player and send
+    // a claim to update our username
+    if player_id.peer_id == client.socket_id().unwrap() {
+        commands.entity(trigger.target()).insert(MyPlayer);
+        window.cursor_options.visible = false;
+
+        //client.queue_claim(ClientClaim::WantsToPlay {
+        //    username: connection_settings.username.clone(),
+        //});
+    }
+
+    // spawn cursor
+    commands.spawn((
+        CursorIconFor(player_id),
+        Sprite::from_image(assets.cursor_sprite.clone()),
+        Transform::from_scale(Vec3::new(0.1, 0.1, 1.0))
+            .with_translation(Vec3::new(0.0, 0.0, 100.0)),
+    ));
+
+    commands
+        .entity(trigger.target())
+        .with_child((
+            PlayerNameText,
+            Text2d::new(format!("Player {}", player_id.player_number())),
+            TextFont::from_font_size(14.0),
+            Transform::from_xyz(
+                0.0,
+                (DESIRED_CARD_HEIGHT + 15.0) * player_id.up_or_down(),
+                1.0,
+            ),
+            TextColor(Color::WHITE),
+        ))
+        .observe(
+            |trigger: Trigger<OnAdd, HasImmunity>,
+             mut commands: Commands,
+             assets: Res<GameAssets>| {
+                commands.entity(trigger.target()).with_child((
+                    Sprite::from_image(assets.locked_sprite.clone()),
+                    Transform::from_translation(Vec3::new(0.0, 0.0, 10.0))
+                        .with_scale(Vec3::splat(0.2)),
+                ));
+            },
+        );
+}
+
+fn on_discard_pile_spawn(trigger: Trigger<OnAdd, DiscardPile>, mut commands: Commands) {
+    commands.entity(trigger.target()).insert((
+        Name::new("Discard Pile"),
+        GrowOnHover,
+        Transform::from_xyz(0.0, 0.0, 0.0),
+        Sprite::from_color(
+            Color::srgb(0.0, 0.0, 0.2),
+            Vec2::new(DESIRED_CARD_WIDTH, DESIRED_CARD_HEIGHT),
+        ),
+        Pickable::default(),
+    ));
+}
+
+fn sync_cursors_from_state(
+    mut cursors: Query<(&mut Transform, &CursorIconFor)>,
+    state: Single<&CambioState>,
+    players: Query<&PlayerState>,
+) {
+    for (mut t, CursorIconFor(player_id)) in cursors.iter_mut() {
+        if let Some(player) = state.player_index.get(player_id) {
+            if let Ok(player_state) = players.get(*player) {
+                t.translation.x = player_state.last_mouse_pos_world.x;
+                t.translation.y = player_state.last_mouse_pos_world.y;
+            }
+        }
+    }
 }
 
 fn update_player_turn_state(
@@ -283,77 +288,77 @@ fn update_player_turn_state(
     );
 }
 
-fn client_sync_players(
-    mut commands: Commands,
-    state: Single<(Entity, &CambioState)>,
-    mut players: Query<&mut PlayerState>,
-    me: Query<&MyPlayer>,
-    mut cursors: Query<(&mut Transform, &CursorIconFor)>,
-    mut client: ResMut<MatchboxSocket>,
-) {
-    let (root, state) = *state;
-    for (peer_id, peer_state) in client.update_peers() {
-        match peer_state {
-            PeerState::Connected => println!("Connected to peer {peer_id}"),
-            PeerState::Disconnected => println!("Disconnected from peer {peer_id}"),
-        }
-    }
-    for (_, message) in client.channel_mut(RELIABLE_CHANNEL).receive() {
-        let server_message: ServerMessage =
-            bincode::serde::decode_from_slice(&message, bincode::config::standard())
-                .unwrap()
-                .0;
-
-        commands.run_system_cached_with(
-            process_single_event.pipe(|_: In<bool>| ()),
-            (root, server_message),
-        );
-    }
-
-    for (_peer_id, message) in client.channel_mut(UNRELIABLE_CHANNEL).receive() {
-        let message: ServerMessageUnreliable =
-            bincode::serde::decode_from_slice(&message, bincode::config::standard())
-                .unwrap()
-                .0;
-        match message {
-            ServerMessageUnreliable::MousePositions(items) => {
-                for (player_id, mouse_pos) in items.iter() {
-                    if state.player_index.get(player_id).is_none() {
-                        continue;
-                    }
-                    if me.contains(state.player_index[player_id]) {
-                        // We use the local mouse position to reduce
-                        // visual latency
-                        continue;
-                    }
-
-                    if let Ok(mut player_state) = players.get_mut(state.player_index[player_id]) {
-                        player_state.last_mouse_pos_world = *mouse_pos;
-                    }
-                }
-
-                let lookup = items.iter().cloned().collect::<HashMap<_, _>>();
-                for (mut t, CursorIconFor(target)) in cursors.iter_mut() {
-                    if let Some(mouse_pos) = lookup.get(target) {
-                        t.translation.x = mouse_pos.x;
-                        t.translation.y = mouse_pos.y;
-                    }
-                }
-            }
-        }
-    }
-}
+//fn client_sync_players(
+//    mut commands: Commands,
+//    state: Single<(Entity, &CambioState)>,
+//    mut players: Query<&mut PlayerState>,
+//    me: Query<&MyPlayer>,
+//    mut cursors: Query<(&mut Transform, &CursorIconFor)>,
+//    mut client: ResMut<Transport>,
+//) {
+//    let (root, state) = *state;
+//    for (peer_id, peer_state) in client.update_peers() {
+//        match peer_state {
+//            PeerState::Connected => println!("Connected to peer {peer_id}"),
+//            PeerState::Disconnected => println!("Disconnected from peer {peer_id}"),
+//        }
+//    }
+//    for (_, message) in client.channel_mut(RELIABLE_CHANNEL).receive() {
+//        let server_message: ServerMessage =
+//            bincode::serde::decode_from_slice(&message, bincode::config::standard())
+//                .unwrap()
+//                .0;
+//
+//        commands.run_system_cached_with(
+//            process_single_event.pipe(|_: In<bool>| ()),
+//            (root, server_message),
+//        );
+//    }
+//
+//    for (_peer_id, message) in client.channel_mut(UNRELIABLE_CHANNEL).receive() {
+//        let message: ServerMessageUnreliable =
+//            bincode::serde::decode_from_slice(&message, bincode::config::standard())
+//                .unwrap()
+//                .0;
+//        match message {
+//            ServerMessageUnreliable::MousePositions(items) => {
+//                for (player_id, mouse_pos) in items.iter() {
+//                    if state.player_index.get(player_id).is_none() {
+//                        continue;
+//                    }
+//                    if me.contains(state.player_index[player_id]) {
+//                        // We use the local mouse position to reduce
+//                        // visual latency
+//                        continue;
+//                    }
+//
+//                    if let Ok(mut player_state) = players.get_mut(state.player_index[player_id]) {
+//                        player_state.last_mouse_pos_world = *mouse_pos;
+//                    }
+//                }
+//
+//                let lookup = items.iter().cloned().collect::<HashMap<_, _>>();
+//                for (mut t, CursorIconFor(target)) in cursors.iter_mut() {
+//                    if let Some(mouse_pos) = lookup.get(target) {
+//                        t.translation.x = mouse_pos.x;
+//                        t.translation.y = mouse_pos.y;
+//                    }
+//                }
+//            }
+//        }
+//    }
+//}
 
 fn set_and_publish_cursor_position(
     mut me: Single<&mut PlayerState, With<MyPlayer>>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform)>,
-    mut client: ResMut<MatchboxSocket>,
+    mut client: ResMut<Transport>,
 ) {
     if let Some(cpos) = window.cursor_position() {
         if let Ok(world_pos) = camera.0.viewport_to_world_2d(camera.1, cpos) {
             me.last_mouse_pos_world = world_pos;
-            client.send_claim_unreliable(ClientClaimUnreliable::MousePosition(world_pos));
+            client.queue_claim_unreliable(ClientClaimUnreliable::MousePosition(world_pos));
         }
     }
 }
@@ -380,7 +385,7 @@ fn click_slot_card(
     held: Query<(Entity, &IsHeldBy)>,
     slot_ids: Query<&SlotId>,
     parents: Query<&ChildOf>,
-    mut client: ResMut<MatchboxSocket>,
+    mut client: ResMut<Transport>,
 ) {
     if let Ok(card) = cards.get(trigger.target()) {
         if let Ok(ChildOf(parent_entity)) = parents.get(trigger.target()) {
@@ -391,13 +396,13 @@ fn click_slot_card(
                             held.iter().find(|(_, held_by)| held_by.0 == **me)
                         {
                             let held_card_id = *cards.get(held_card).unwrap();
-                            client.send_claim(ClientClaim::SwapHeldCardWithSlotCard {
+                            client.queue_claim(ClientClaim::SwapHeldCardWithSlotCard {
                                 slot_id: *slot_id,
                                 slot_card_id: *card,
                                 held_card_id,
                             });
                         } else {
-                            client.send_claim(ClientClaim::PickUpSlotCard {
+                            client.queue_claim(ClientClaim::PickUpSlotCard {
                                 slot_id: *slot_id,
                                 card_id: *card,
                             });
@@ -406,7 +411,7 @@ fn click_slot_card(
                         trigger.propagate(false);
                     }
                     PointerButton::Secondary => {
-                        client.send_claim(ClientClaim::LookAtCardAtSlot {
+                        client.queue_claim(ClientClaim::LookAtCardAtSlot {
                             slot_id: *slot_id,
                             card_id: *card,
                         });
@@ -426,25 +431,25 @@ fn click_discard_pile(
     state: Single<&CambioState>,
     me: Single<&PlayerId, With<MyPlayer>>,
     held: Query<(Entity, &IsHeldBy, &CardId)>,
-    mut client: ResMut<MatchboxSocket>,
+    mut client: ResMut<Transport>,
 ) {
     if !discard_pile.contains(trigger.target()) {
         return;
     };
 
     if let Some((_, _, &card_id)) = held.iter().find(|(_, held_by, _)| &held_by.0 == *me) {
-        client.send_claim(ClientClaim::DropCardOnDiscardPile { card_id });
+        client.queue_claim(ClientClaim::DropCardOnDiscardPile { card_id });
     } else {
         if state.discard_pile.len() >= 1 {
-            client.send_claim(ClientClaim::TakeCardFromDiscardPile {
+            client.queue_claim(ClientClaim::TakeCardFromDiscardPile {
                 card_id: state.discard_pile[0],
             });
         }
     };
 }
 
-fn click_deck(_trigger: Trigger<Pointer<Click>>, mut client: ResMut<MatchboxSocket>) {
-    client.send_claim(ClientClaim::TakeFreshCardFromDeck);
+fn click_deck(_trigger: Trigger<Pointer<Click>>, mut client: ResMut<Transport>) {
+    client.queue_claim(ClientClaim::TakeFreshCardFromDeck);
 }
 
 fn click_slot(
@@ -453,12 +458,12 @@ fn click_slot(
     slots: Query<(Entity, &SlotId), With<CardSlot>>,
     cards: Query<&CardId>,
     holders: Query<(Entity, &IsHeldBy)>,
-    mut client: ResMut<MatchboxSocket>,
+    mut client: ResMut<Transport>,
 ) {
     if let Ok((_, slot_id)) = slots.get(trigger.target()) {
         if let Some((holding_card, _)) = holders.iter().filter(|h| h.1.0 == **me).next() {
             let card_id = *cards.get(holding_card).unwrap();
-            client.send_claim(ClientClaim::DropCardOnSlot {
+            client.queue_claim(ClientClaim::DropCardOnSlot {
                 card_id: card_id,
                 slot_id: *slot_id,
             });
@@ -547,6 +552,7 @@ fn on_player_state_change(
 fn on_message_accepted(
     mut commands: Commands,
     assets: Res<GameAssets>,
+    me: Single<Entity, With<MyPlayer>>,
     player_ids: Query<(Entity, &PlayerId)>,
     players: Query<&PlayerState>,
     mut state: Single<&mut CambioState>,
@@ -555,11 +561,12 @@ fn on_message_accepted(
     let accepted = std::mem::take(&mut state.message_drain.accepted);
 
     for msg in accepted {
-        if msg == ServerMessage::FinishedReplayingHistory {
-            *catched_up = true;
-        }
-
         match msg {
+            ServerMessage::FinishedReplayingHistory { player_id } => {
+                if player_id == *player_ids.get(*me).unwrap().1 {
+                    *catched_up = true;
+                }
+            }
             ServerMessage::ReceiveFreshCardFromDeck { card_id, .. } => {
                 if *catched_up && let Some(card_entity) = state.card_index.get(&card_id) {
                     commands

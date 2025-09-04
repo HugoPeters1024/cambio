@@ -11,6 +11,9 @@ pub const UNRELIABLE_CHANNEL: usize = 1;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ClientClaim {
+    WantsToPlay {
+        username: String,
+    },
     PickUpSlotCard {
         slot_id: SlotId,
         card_id: CardId,
@@ -36,9 +39,6 @@ pub enum ClientClaim {
         held_card_id: CardId,
     },
     SlapTable,
-    SetUsername {
-        username: String,
-    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -46,7 +46,9 @@ pub enum ServerMessage {
     PlayerConnected {
         player_id: PlayerId,
     },
-    FinishedReplayingHistory,
+    FinishedReplayingHistory {
+        player_id: PlayerId,
+    },
     PlayerDisconnected {
         player_id: PlayerId,
     },

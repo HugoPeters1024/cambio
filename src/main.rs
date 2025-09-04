@@ -14,84 +14,63 @@ mod cards;
 mod client;
 mod menu;
 mod messages;
-mod utils;
 mod server;
+mod transport;
+mod utils;
+mod host_utils;
 
 use crate::assets::*;
 use crate::cambio::CambioPlugin;
 use crate::cards::*;
 use crate::client::ClientPlugin;
+use crate::transport::TransportPlugin;
 
 fn main() {
-    println!("Usage: run with \"server\" or \"client\" argument");
-    let args: Vec<String> = std::env::args().collect();
-
-    let exec_type = if args.len() < 2 { "client" } else { &args[1] };
-    let is_host = match exec_type {
-        "client" => false,
-        "server" => true,
-        _ => panic!("Usage: run with \"server\" or \"client\" argument"),
-    };
-
     let mut app = App::new();
     app.add_plugins(bevy_rand::plugin::EntropyPlugin::<bevy_rand::prelude::WyRand>::default());
 
-    if is_host {
-        use bevy::app::{RunMode, ScheduleRunnerPlugin};
-        use std::time::Duration;
-
-        app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin {
-            run_mode: RunMode::Loop {
-                wait: Some(Duration::from_millis(5)),
-            },
-        }));
-        app.add_plugins(bevy::log::LogPlugin::default());
-        app.add_plugins(CambioPlugin);
-        app.add_plugins(crate::server::ServerPlugin);
-        app.insert_resource(Time::<Fixed>::from_hz(300.0));
-    } else {
-        app.add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "float_me_pls".to_string(),
-                        #[cfg(target_arch = "wasm32")]
-                        resolution: WindowResolution::new(1280.0, 720.0),
-                        #[cfg(not(target_arch = "wasm32"))]
-                        resolution: WindowResolution::new(800.0, 600.0),
-                        // Bind to canvas included in `index.html`
-                        canvas: Some("#bevy".to_owned()),
-                        // fill the entire browser window
-                        fit_canvas_to_parent: true,
-                        // don't hijack keyboard shortcuts like F5, F6, F12, Ctrl+R etc.
-                        prevent_default_event_handling: false,
-                        ..default()
-                    }),
-                    ..default()
-                })
-                .set(AssetPlugin {
-                    // Breaks in the browser from some reason otherwise
-                    meta_check: AssetMetaCheck::Never,
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "float_me_pls".to_string(),
+                    #[cfg(target_arch = "wasm32")]
+                    resolution: WindowResolution::new(1280.0, 720.0),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    resolution: WindowResolution::new(800.0, 600.0),
+                    // Bind to canvas included in `index.html`
+                    canvas: Some("#bevy".to_owned()),
+                    // fill the entire browser window
+                    fit_canvas_to_parent: true,
+                    // don't hijack keyboard shortcuts like F5, F6, F12, Ctrl+R etc.
+                    prevent_default_event_handling: false,
                     ..default()
                 }),
-        );
+                ..default()
+            })
+            .set(AssetPlugin {
+                // Breaks in the browser from some reason otherwise
+                meta_check: AssetMetaCheck::Never,
+                ..default()
+            }),
+    );
 
-        // Because we doing networking, there might be updates to the game
-        // even when the window is not in focus, so we should ensure our update
-        // systems keep running in that case.
-        app.insert_resource(WinitSettings {
-            unfocused_mode: UpdateMode::Continuous,
-            ..default()
-        });
-        app.add_plugins(bevy_tweening::TweeningPlugin);
-        app.add_plugins(CambioPlugin);
-        app.add_plugins(ClientPlugin);
-        app.add_plugins(crate::menu::MenuPlugin);
+    // Because we doing networking, there might be updates to the game
+    // even when the window is not in focus, so we should ensure our update
+    // systems keep running in that case.
+    app.insert_resource(WinitSettings {
+        unfocused_mode: UpdateMode::Continuous,
+        ..default()
+    });
+    app.add_plugins(bevy_tweening::TweeningPlugin);
+    app.add_plugins(TransportPlugin);
+    app.add_plugins(ClientPlugin);
+    app.add_plugins(CambioPlugin);
+    app.add_plugins(crate::menu::MenuPlugin);
 
-        app.add_plugins((GameAssetPlugin, CardPlugin));
+    app.add_plugins((GameAssetPlugin, CardPlugin));
 
-        app.add_systems(Startup, set_window_icon);
-    }
+    app.add_systems(Startup, set_window_icon);
 
     app.run();
 }

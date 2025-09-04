@@ -57,6 +57,7 @@ pub enum GamePhase {
     #[default]
     AssetLoading,
     Menu,
+    Connecting,
     Playing,
 }
 
