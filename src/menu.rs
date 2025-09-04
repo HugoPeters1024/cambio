@@ -14,7 +14,7 @@ impl Plugin for MenuPlugin {
         app.add_plugins(bevy_ui_text_input::TextInputPlugin);
         app.add_systems(OnEnter(GamePhase::Menu), setup_menu);
         app.add_systems(OnExit(GamePhase::Menu), remove_menu);
-        app.add_systems(Update, button_system);
+        app.add_systems(Update, (button_system_host_game, button_system_join_game));
     }
 }
 
@@ -224,7 +224,7 @@ fn remove_menu(mut commands: Commands, query: Query<Entity, With<MenuRoot>>) {
     }
 }
 
-fn button_system(
+fn button_system_host_game(
     mut commands: Commands,
     mut interaction_query: Query<
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
@@ -259,6 +259,56 @@ fn button_system(
                 });
 
                 let transport = Transport::new_host(&mut commands, server_url);
+                commands.insert_resource(transport);
+                next_state.set(GamePhase::Connecting);
+            }
+            Interaction::Hovered => {
+                *color = HOVERED_BUTTON.into();
+                border_color.0 = Color::WHITE;
+            }
+            Interaction::None => {
+                *color = NORMAL_BUTTON.into();
+                border_color.0 = Color::BLACK;
+            }
+        }
+    }
+}
+
+fn button_system_join_game(
+    mut commands: Commands,
+    mut interaction_query: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<JoinGameButton>),
+    >,
+    server_url_input: Single<(&TextInputContents, &TextInputPrompt), With<ServerUrlInput>>,
+    username_input: Single<(&TextInputContents, &TextInputPrompt), With<UsernameInput>>,
+    mut next_state: ResMut<NextState<GamePhase>>,
+) {
+    for (interaction, mut color, mut border_color) in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = PRESSED_BUTTON.into();
+                border_color.0 = RED.into();
+                let server_url = if server_url_input.0.get().is_empty() {
+                    server_url_input.1.text.as_str()
+                } else {
+                    server_url_input.0.get()
+                }
+                .to_string();
+
+                let username = if username_input.0.get().is_empty() {
+                    username_input.1.text.as_str()
+                } else {
+                    username_input.0.get()
+                }
+                .to_string();
+
+                commands.insert_resource(ConnectionSettings {
+                    server_url: server_url.clone(),
+                    username,
+                });
+
+                let transport = Transport::new_client(server_url);
                 commands.insert_resource(transport);
                 next_state.set(GamePhase::Connecting);
             }

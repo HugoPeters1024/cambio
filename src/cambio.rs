@@ -359,6 +359,7 @@ pub fn process_single_event(
                 .id();
 
             state.player_index.insert(*player_id, player_entity);
+            println!("Added {:?} to the player index", player_id);
         }
         ServerMessage::SetUsername { actor, username } => {
             let player_entity = player_must_exists!(actor);

@@ -38,52 +38,62 @@ pub fn host_eval_event(
         );
     }
 
-    fn broadcast_on_accepted(
-        was_accepted: In<Option<ServerMessage>>,
+    fn accept_and_broadcast(
+        msg: In<ServerMessage>,
         transport: ResMut<Transport>,
         state: Single<&CambioState>,
     ) {
-        let Transport::Host { socket, .. } = transport.into_inner() else {
+        let Transport::Host {
+            socket,
+            accepted_history,
+            ..
+        } = transport.into_inner()
+        else {
             panic!("impossible");
         };
-        if let Some(accepted_msg) = &*was_accepted {
-            let peers = socket.connected_peers().collect::<Vec<_>>();
+        let peers = socket.connected_peers().collect::<Vec<_>>();
 
-            let mut broadcast = |msg: ServerMessage| {
-                for peer_id in peers.iter() {
-                    let player_id = state
-                        .player_index
-                        .keys()
-                        .find(|player_id| player_id.peer_id == *peer_id)
-                        .unwrap();
-                    socket.send_message_typed(*peer_id, msg.redacted_for(player_id));
-                }
-            };
-
-            match accepted_msg {
-                ServerMessage::TakeFreshCardFromDeck { actor, card_id }
-                | ServerMessage::RevealCardAtSlot { actor, card_id, .. } => {
-                    broadcast(ServerMessage::PublishCardForPlayer {
-                        player_id: *actor,
-                        card_id: *card_id,
-                        value: Some(state.card_lookup.0.get(card_id).unwrap().clone()),
-                    });
-                }
-                ServerMessage::DropCardOnDiscardPile { card_id, .. } => {
-                    broadcast(ServerMessage::PublishCardPublically {
-                        card_id: *card_id,
-                        value: state.card_lookup.0.get(card_id).unwrap().clone(),
-                    });
-                }
-                _ => (),
+        let mut go = |msg: ServerMessage| {
+            for peer_id in peers.iter() {
+                let player_id = state
+                    .player_index
+                    .keys()
+                    .find(|player_id| player_id.peer_id == *peer_id)
+                    .unwrap();
+                socket.send_message_typed(*peer_id, msg.redacted_for(player_id));
             }
+            accepted_history.push(msg.clone());
+        };
 
-            broadcast(accepted_msg.clone());
+        match *msg {
+            ServerMessage::TakeFreshCardFromDeck { actor, card_id }
+            | ServerMessage::RevealCardAtSlot { actor, card_id, .. } => {
+                go(ServerMessage::PublishCardForPlayer {
+                    player_id: actor,
+                    card_id: card_id,
+                    value: Some(state.card_lookup.0.get(&card_id).unwrap().clone()),
+                });
+            }
+            ServerMessage::DropCardOnDiscardPile { card_id, .. } => {
+                go(ServerMessage::PublishCardPublically {
+                    card_id: card_id,
+                    value: state.card_lookup.0.get(&card_id).unwrap().clone(),
+                });
+            }
+            _ => (),
         }
+
+        go(msg.clone());
     }
 
     commands.run_system_cached_with(
-        process_single_event.pipe(broadcast_on_accepted),
+        process_single_event.pipe(
+            |In(msg): In<Option<ServerMessage>>, mut commands: Commands| {
+                if let Some(msg) = msg {
+                    commands.run_system_cached_with(accept_and_broadcast, msg);
+                }
+            },
+        ),
         (root, msg),
     );
 
@@ -109,20 +119,21 @@ pub fn setup_new_player(
     // Replay the history if the target is not the host itself
     if player_id.peer_id != socket.id().unwrap() {
         for msg in accepted_history.iter() {
+            info!("Replaying: {msg:?}");
             socket.send_message_typed(player_id.peer_id, msg.redacted_for(&player_id));
         }
     }
 
     commands.run_system_cached_with(
         host_eval_event,
-        ServerMessage::FinishedReplayingHistory {
-            player_id: player_id,
-        },
+        ServerMessage::PlayerConnected { player_id },
     );
 
     commands.run_system_cached_with(
         host_eval_event,
-        ServerMessage::PlayerConnected { player_id },
+        ServerMessage::FinishedReplayingHistory {
+            player_id: player_id,
+        },
     );
 
     for i in 0..4 {

@@ -7,14 +7,9 @@ use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
 use rand::Rng;
 
 use crate::{
-    assets::GamePhase,
-    cambio::{CambioState, PlayerId, PlayerState},
-    host_utils::host_eval_event,
-    messages::{
-        ClientClaim, ClientClaimUnreliable, RELIABLE_CHANNEL, ServerMessage,
-        ServerMessageUnreliable, UNRELIABLE_CHANNEL,
-    },
-    utils::Seq,
+    assets::GamePhase, cambio::{process_single_event, CambioState, PlayerId, PlayerState}, host_utils::host_eval_event, messages::{
+        ClientClaim, ClientClaimUnreliable, ServerMessage, ServerMessageUnreliable, RELIABLE_CHANNEL, UNRELIABLE_CHANNEL
+    }, server::ServerExt, utils::Seq
 };
 
 pub struct TransportPlugin;
@@ -211,16 +206,27 @@ fn host_initializes_its_player(mut commands: Commands, transport: ResMut<Transpo
     }
 }
 
-fn both_sync_peers(transport: ResMut<Transport>) {
+fn both_sync_peers(mut commands: Commands, transport: ResMut<Transport>) {
     match transport.into_inner() {
         Transport::Client { socket, .. } => {
             socket.update_peers();
         }
-        Transport::Host { socket, .. } => {
+        Transport::Host {
+            socket,
+            player_seq,
+            setup_new_player,
+            ..
+        } => {
             for (peer_id, peer_state) in socket.update_peers() {
                 match peer_state {
                     PeerState::Connected => {
                         info!("A client connected: {peer_id}");
+                        let player_index = player_seq.generate();
+                        let player_id = PlayerId {
+                            peer_id,
+                            player_index,
+                        };
+                        commands.run_system_with(*setup_new_player, player_id);
                     }
                     PeerState::Disconnected => {
                         warn!("A clien disconnected: {peer_id}");
@@ -393,7 +399,11 @@ fn host_processes_unreliable_claims(
     }
 }
 
-fn client_receives_reliable_results(transport: ResMut<Transport>) {
+fn client_receives_reliable_results(
+    mut commands: Commands,
+    transport: ResMut<Transport>,
+    root: Single<Entity, With<CambioState>>,
+) {
     match transport.into_inner() {
         Transport::Host { .. } => {
             // The host has already processed messages on account of being the auhority
@@ -404,7 +414,11 @@ fn client_receives_reliable_results(transport: ResMut<Transport>) {
                     bincode::serde::decode_from_slice(&message, bincode::config::standard())
                         .unwrap()
                         .0;
-                println!("Got message from server {peer_id}: {message:?}");
+
+                commands.run_system_cached_with(
+                    process_single_event.pipe(|_: In<Option<ServerMessage>>| ()),
+                    (*root, message),
+                );
             }
         }
     }

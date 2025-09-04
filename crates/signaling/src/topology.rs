@@ -43,8 +43,9 @@ impl SignalingTopology<NoCallbacks, ServerState> for RoomedClientServerTopology 
                     HostOrClient::Client => {
                         info!("Client {} disconnected from room {}", peer_id, room_id.0);
                         let mut lock = state.hosted_rooms.lock().unwrap();
-                        let room = lock.get_mut(&room_id).unwrap();
-                        room.clients.remove(&peer_id);
+                        if let Some(room) = lock.get_mut(&room_id) {
+                            room.clients.remove(&peer_id);
+                        }
                     }
                 }
             }};
