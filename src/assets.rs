@@ -59,6 +59,7 @@ pub enum GamePhase {
     Menu,
     Connecting,
     Playing,
+    ConnectionLost,
 }
 
 pub struct GameAssetPlugin;

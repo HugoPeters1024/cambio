@@ -191,12 +191,24 @@ fn wait_for_transport_connected(
             };
         }
         Transport::Client(client) => {
-            if let Some(id) = client.socket.id()
-                && client.socket_id.is_none()
-            {
-                client.socket_id.replace(id);
-                info!("My socket was assigned id: {id}");
-                next_state.set(GamePhase::Playing);
+            if let Some(id) = client.socket.id() {
+                if client.socket_id.is_none() {
+                    client.socket_id.replace(id);
+                    info!("My socket was assigned id: {id}");
+                }
+
+                for (_, peer_state) in client.socket.update_peers() {
+                    match peer_state {
+                        PeerState::Connected => {
+                            info!("Connection to server established");
+                            next_state.set(GamePhase::Playing);
+                        }
+                        PeerState::Disconnected => {
+                            error!("Disconnected from server");
+                            next_state.set(GamePhase::ConnectionLost);
+                        }
+                    }
+                }
             };
         }
     }
@@ -218,10 +230,22 @@ fn host_initializes_its_player(mut commands: Commands, transport: ResMut<Transpo
     commands.run_system_with(host.setup_new_player, player_id);
 }
 
-fn both_sync_peers(mut commands: Commands, transport: ResMut<Transport>) {
+fn both_sync_peers(
+    mut commands: Commands,
+    transport: ResMut<Transport>,
+    state: Single<&CambioState>,
+    mut next_state: ResMut<NextState<GamePhase>>,
+) {
     match transport.into_inner() {
         Transport::Client(client) => {
-            client.socket.update_peers();
+            for (_, peer_state) in client.socket.update_peers() {
+                match peer_state {
+                    PeerState::Connected => panic!(
+                        "Impossible, the server connection should have happened in wait_for_transport_connected!"
+                    ),
+                    PeerState::Disconnected => next_state.set(GamePhase::ConnectionLost),
+                }
+            }
         }
         Transport::Host(host) => {
             for (peer_id, peer_state) in host.socket.update_peers() {
@@ -236,7 +260,18 @@ fn both_sync_peers(mut commands: Commands, transport: ResMut<Transport>) {
                         commands.run_system_with(host.setup_new_player, player_id);
                     }
                     PeerState::Disconnected => {
-                        warn!("A clien disconnected: {peer_id}");
+                        warn!("A client disconnected: {peer_id}");
+                        let player_id = state
+                            .player_index
+                            .keys()
+                            .find(|player_id| player_id.peer_id == peer_id)
+                            .unwrap();
+                        commands.run_system_cached_with(
+                            host_eval_event,
+                            ServerMessage::PlayerDisconnected {
+                                player_id: *player_id,
+                            },
+                        );
                     }
                 }
             }

@@ -40,6 +40,8 @@ impl Plugin for ClientPlugin {
             (spawn_cambio_root, setup).chain(),
         );
 
+        app.add_systems(OnEnter(GamePhase::ConnectionLost), setup_connection_lost);
+
         app.add_systems(
             Update,
             ((
@@ -596,4 +598,24 @@ fn effects_for_accepted_messages(
             _ => (),
         }
     }
+}
+
+fn setup_connection_lost(
+    mut commands: Commands,
+    mut window: Single<&mut Window, With<PrimaryWindow>>,
+) {
+    window.cursor_options.visible = true;
+
+    commands.spawn((
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            flex_direction: FlexDirection::Column,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+        children![TextShadow::default(), Text::new("Connection Lost")],
+    ));
 }
