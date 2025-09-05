@@ -28,7 +28,18 @@ impl PlayerId {
 }
 
 #[derive(Component)]
-pub struct IsHeldBy(pub PlayerId);
+#[relationship(relationship_target = IsHoldingCard)]
+pub struct IsHeldBy(pub Entity);
+
+#[derive(Component)]
+#[relationship_target(relationship = IsHeldBy)]
+pub struct IsHoldingCard(Entity);
+
+impl IsHoldingCard {
+    pub fn card_entity(&self) -> Entity {
+        self.0
+    }
+}
 
 /// Marker component that we're laid on the discard pile because the top
 /// card matched the rank.
@@ -46,7 +57,12 @@ pub struct CardId(pub u64);
 pub struct SlotId(pub u64);
 
 #[derive(Component)]
-pub struct TakenFromSlot(pub SlotId);
+#[relationship(relationship_target = HasCard)]
+pub struct BelongsToSlot(pub Entity);
+
+#[derive(Component)]
+#[relationship_target(relationship = BelongsToSlot)]
+pub struct HasCard(Entity);
 
 #[derive(Component)]
 pub struct UnrevealKnownCardTimer(Timer);
@@ -181,10 +197,11 @@ pub fn process_single_event(
     In((root, msg)): In<(Entity, ServerMessage)>,
     mut states: Query<&mut CambioState>,
     mut players: Query<(&PlayerId, &mut PlayerState)>,
-    held: Query<(Entity, &IsHeldBy)>,
+    held_by: Query<(Entity, &IsHeldBy)>,
+    is_holding: Query<&IsHoldingCard>,
     my_player: Query<Entity, With<MyPlayer>>,
-    taken_from_slot: Query<&TakenFromSlot>,
-    card_ids: Query<&CardId>,
+    (belongs_to_slot, has_card): (Query<&BelongsToSlot>, Query<&HasCard>),
+    (card_ids, slot_ids): (Query<&CardId>, Query<&SlotId>),
     known_cards: Query<&KnownCard>,
     children: Query<&Children>,
     matching_discard: Query<&WasMatchingDiscard>,
@@ -272,36 +289,46 @@ pub fn process_single_event(
     macro_rules! slot_must_have_card {
         ($slot_id: expr, $card_id: expr) => {{
             let slot_entity = slot_must_exists!($slot_id);
-            if !children
-                .iter_descendants(slot_entity)
-                .any(|c| card_ids.get(c) == Ok(&$card_id))
-            {
-                reject!("Slot {} does not have card {}.", $slot_id.0, $card_id.0);
+            let card_entity = card_must_exists!($card_id);
+            if let Ok(HasCard(has_card)) = has_card.get(slot_entity) {
+                if *has_card != card_entity {
+                    reject!("Slot {} does not have card {}.", $slot_id.0, $card_id.0);
+                }
+            }
+        }};
+    }
+
+    macro_rules! slot_must_not_have_card {
+        ($slot_id: expr) => {{
+            let slot_entity = slot_must_exists!($slot_id);
+            if has_card.contains(slot_entity) {
+                reject!("Slot {} already has a card.", $slot_id.0);
             }
         }};
     }
 
     macro_rules! player_must_be_holding_card {
         ($player_id: expr, $card_id: expr) => {{
+            let player_entity = player_must_exists!($player_id);
             let card_entity = card_must_exists!($card_id);
-            if let Ok((_, held_by)) = held.get(card_entity) {
-                if held_by.0 != *$player_id {
+            if let Ok(IsHoldingCard(holding_card_entity)) = is_holding.get(player_entity) {
+                if *holding_card_entity != card_entity {
                     reject!(
-                        "Player {} is not holding card {}, Player {} is.",
+                        "Player {} is not holding card {}.",
                         $player_id.player_number(),
-                        $card_id.0,
-                        held_by.0.player_number()
+                        $card_id.0
                     );
                 }
             } else {
-                reject!("Card is not being held at all",);
+                reject!("Player {} is not holding any card", $player_id.player_number());
             }
         }};
     }
 
     macro_rules! player_must_not_be_holding_a_card {
         ($player_id: expr) => {{
-            if held.iter().any(|(_, held_by)| held_by.0 == *$player_id) {
+            let player_entity = player_must_exists!($player_id);
+            if is_holding.get(player_entity).is_ok() {
                 reject!(
                     "Player {} is already holding a card.",
                     $player_id.player_number()
@@ -316,6 +343,15 @@ pub fn process_single_event(
                 reject!("Card {} should have known value.", $card_id.0);
             };
             known_card
+        }};
+    }
+
+    macro_rules! card_must_not_be_held {
+        ($card_id: expr) => {{
+            let card_entity = card_must_exists!($card_id);
+            if is_holding.get(card_entity).is_ok() {
+                reject!("Card {} is already held.", $card_id.0);
+            }
         }};
     }
 
@@ -388,7 +424,6 @@ pub fn process_single_event(
                 .id();
 
             state.player_index.insert(*player_id, player_entity);
-            println!("Added {:?} to the player index", player_id);
         }
         ServerMessage::SetUsername { actor, username } => {
             let player_entity = player_must_exists!(actor);
@@ -460,13 +495,7 @@ pub fn process_single_event(
         } => {
             let _ = player_must_exists!(actor);
             let slot_entity = slot_must_exists!(slot_id);
-
-            if children
-                .iter_descendants(slot_entity)
-                .any(|c| card_ids.contains(c))
-            {
-                reject!("Slot already has a card.");
-            }
+            slot_must_not_have_card!(slot_id);
 
             card_id_must_be_top_of_deck!(card_id);
             let card_entity = commands
@@ -476,6 +505,7 @@ pub fn process_single_event(
                     *card_id,
                     Transform::from_xyz(0.0, 0.0, 1.0),
                     ChildOf(slot_entity),
+                    BelongsToSlot(slot_entity),
                     Pickable::default(),
                 ))
                 .id();
@@ -487,24 +517,26 @@ pub fn process_single_event(
             slot_id,
             card_id,
         } => {
-            let _player_entity = player_must_exists!(actor);
+            let player_entity = player_must_exists!(actor);
             let card_entity = card_must_exists!(card_id);
+            let slot_entity = slot_must_exists!(slot_id);
             slot_must_have_card!(slot_id, card_id);
             player_must_not_be_holding_a_card!(actor);
+            card_must_not_be_held!(card_id);
 
             let slot_owner = slot_owner!(slot_id);
             if slot_owner != actor {
                 slot_owner_must_not_be_immune!(slot_id);
             }
 
-            if held.contains(card_entity) {
+            if held_by.contains(card_entity) {
                 reject!("Card is both attached to a slot and held?!");
             }
 
             commands
                 .entity(card_entity)
-                .insert(IsHeldBy(*actor))
-                .insert(TakenFromSlot(*slot_id))
+                .insert(IsHeldBy(player_entity))
+                .insert(BelongsToSlot(slot_entity))
                 .insert(Transform::from_xyz(0.0, 0.0, 10.0))
                 .remove::<ChildOf>()
                 .remove::<Pickable>();
@@ -526,9 +558,10 @@ pub fn process_single_event(
                 reject!("Slot already has a card.");
             }
 
-            if let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(card_entity)
+            if let Ok(BelongsToSlot(originating_slot_entity)) = belongs_to_slot.get(card_entity)
                 && let Ok(MayGiveCardTo(player_to_screw)) = may_give_card_to.get(player_entity)
             {
+                let originating_slot = slot_ids.get(*originating_slot_entity).unwrap();
                 let slot_owner = slot_owner!(slot_id);
                 let card_owner = slot_owner!(originating_slot);
 
@@ -558,9 +591,11 @@ pub fn process_single_event(
                     // 3. Then we can complete the action
                     commands.entity(player_entity).remove::<MayGiveCardTo>();
                 }
-            } else if let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(card_entity)
+            } else if let Ok(BelongsToSlot(originating_slot_entity)) =
+                belongs_to_slot.get(card_entity)
                 && !player_at_turn.contains(player_entity)
             {
+                let originating_slot = slot_ids.get(*originating_slot_entity).unwrap();
                 // We are specifically doing an out of turn drop with a card that originates from
                 // another player's slot. The only way to drop this card on a slot is by returning
                 // it to the origin.
@@ -570,7 +605,9 @@ pub fn process_single_event(
             } else {
                 let mut turn_state = must_have_turn!(actor);
 
-                if let Ok(TakenFromSlot(taken_from_slot)) = taken_from_slot.get(card_entity) {
+                if let Ok(BelongsToSlot(taken_from_slot_entity)) = belongs_to_slot.get(card_entity)
+                {
+                    let taken_from_slot = slot_ids.get(*taken_from_slot_entity).unwrap();
                     match &*turn_state {
                         TurnState::HasBuff(TurnBuff::MaySwapTwoCards {
                             has_swapped_from_slot: Some(swap_origin),
@@ -605,7 +642,7 @@ pub fn process_single_event(
                 .entity(card_entity)
                 .remove::<IsHeldBy>()
                 .remove::<KnownCard>()
-                .remove::<TakenFromSlot>()
+                .remove::<BelongsToSlot>()
                 .insert(ChildOf(slot_entity))
                 .insert(Pickable::default())
                 .insert(Transform::from_xyz(0.0, 0.0, 1.0));
@@ -669,7 +706,7 @@ pub fn process_single_event(
             }
         }
         ServerMessage::TakeFreshCardFromDeck { actor, card_id } => {
-            let _player_entity = player_must_exists!(actor);
+            let player_entity = player_must_exists!(actor);
             let mut turn_state = must_have_turn!(actor);
 
             if *turn_state != TurnState::Start {
@@ -679,22 +716,15 @@ pub fn process_single_event(
                 );
             }
 
-            if held.iter().any(|held| held.1.0 == *actor) {
-                reject!(
-                    "Player {} is already holding a card.",
-                    actor.player_number()
-                );
-            }
-
-            *turn_state = TurnState::TookDeckCard;
-
+            player_must_not_be_holding_a_card!(actor);
             card_id_must_be_top_of_deck!(card_id);
+            *turn_state = TurnState::TookDeckCard;
             let card_entity = commands
                 .spawn((
                     SomeCard,
                     *card_id,
                     Name::new(format!("Card {}", card_id.0)),
-                    IsHeldBy(*actor),
+                    IsHeldBy(player_entity),
                     Transform::from_xyz(0.0, 0.0, 10.0),
                 ))
                 .id();
@@ -721,7 +751,8 @@ pub fn process_single_event(
             player_must_be_holding_card!(actor, card_id);
             let known_value = card_must_be_known_internally!(card_id);
 
-            if let Ok(TakenFromSlot(origin_slot_id)) = taken_from_slot.get(card_entity) {
+            if let Ok(BelongsToSlot(origin_slot_entity)) = belongs_to_slot.get(card_entity) {
+                let origin_slot_id = slot_ids.get(*origin_slot_entity).unwrap();
                 let Some(top_card) = state.discard_pile.front() else {
                     reject!("Discard pile is empty");
                 };
@@ -755,17 +786,17 @@ pub fn process_single_event(
 
                 // Player is has claimed a discard opportunity!
                 // The other players holding such a card were too late and we put the card back
-                for (held_card, _) in held.iter().filter(|(_, held_by)| held_by.0 != *actor) {
-                    if let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(held_card) {
+                for IsHoldingCard(held_card) in is_holding.iter() {
+                    if let Ok(BelongsToSlot(originating_slot_entity)) =
+                        belongs_to_slot.get(*held_card)
+                    {
                         // This card is held by someone else trying to claim a dicard opportunity,
                         // but they were to late! Let's put the card back where it came from.
-                        let slot_entity = slot_must_exists!(originating_slot);
                         commands
-                            .entity(held_card)
+                            .entity(*held_card)
                             .remove::<IsHeldBy>()
                             .remove::<KnownCard>()
-                            .remove::<TakenFromSlot>()
-                            .insert(ChildOf(slot_entity))
+                            .insert(ChildOf(*originating_slot_entity))
                             .insert(Pickable::default())
                             .insert(Transform::from_xyz(0.0, 0.0, 1.0));
                     }
@@ -829,7 +860,7 @@ pub fn process_single_event(
             commands
                 .entity(card_entity)
                 .remove::<IsHeldBy>()
-                .remove::<TakenFromSlot>()
+                .remove::<BelongsToSlot>()
                 .remove::<UnrevealKnownCardTimer>()
                 .insert(*known_value)
                 .insert(ChildOf(state.discard_pile_entity))
@@ -846,16 +877,10 @@ pub fn process_single_event(
             commands.entity(player_entity).insert(TurnState::Start);
         }
         ServerMessage::TakeCardFromDiscardPile { actor, card_id } => {
-            let _player_entity = player_must_exists!(actor);
+            let player_entity = player_must_exists!(actor);
             let card_entity = card_must_exists!(card_id);
             let mut turn_state = must_have_turn!(actor);
-
-            if held.iter().any(|held| held.1.0 == *actor) {
-                reject!(
-                    "Player {} is already holding a card.",
-                    actor.player_number()
-                );
-            }
+            player_must_not_be_holding_a_card!(actor);
 
             if state.discard_pile.len() == 0 {
                 reject!("Discard pile is empty.");
@@ -876,7 +901,7 @@ pub fn process_single_event(
             state.discard_pile.pop_front();
             commands
                 .entity(card_entity)
-                .insert(IsHeldBy(*actor))
+                .insert(IsHeldBy(player_entity))
                 .insert(Transform::from_xyz(0.0, 0.0, 10.0))
                 .remove::<ChildOf>();
         }
@@ -926,11 +951,12 @@ pub fn process_single_event(
                 TurnState::HasBuff(TurnBuff::MaySwapTwoCards {
                     has_swapped_from_slot,
                 }) => {
-                    let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(held_card_entity)
+                    let Ok(BelongsToSlot(originating_slot_entity)) = belongs_to_slot.get(held_card_entity)
                     else {
                         reject!("Can only swap cards taken from a player at this point");
                     };
 
+                    let originating_slot = slot_ids.get(*originating_slot_entity).unwrap();
                     match has_swapped_from_slot {
                         Some(_) => {
                             reject!("Already swapped two cards");
@@ -954,11 +980,12 @@ pub fn process_single_event(
                         reject!("Already swapped two cards");
                     }
 
-                    let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(held_card_entity)
+                    let Ok(BelongsToSlot(originating_slot_entity)) = belongs_to_slot.get(held_card_entity)
                     else {
                         reject!("Can only swap cards taken from a player at this point");
                     };
 
+                    let originating_slot = slot_ids.get(*originating_slot_entity).unwrap();
                     if has_looked_at_slot != *originating_slot && has_looked_at_slot != *slot_id {
                         reject!("The swap has to include the card you looked at");
                     };
@@ -970,29 +997,34 @@ pub fn process_single_event(
                 }
             }
 
+            // pick up the slot card
+            commands
+                .entity(slot_card_entity)
+                .remove::<ChildOf>()
+                .remove::<BelongsToSlot>()
+                .remove::<Pickable>()
+                .insert(IsHeldBy(player_entity))
+                .insert(Transform::from_xyz(0.0, 0.0, 10.0));
+
+            // drop the held card
             commands
                 .entity(held_card_entity)
                 .remove::<IsHeldBy>()
                 .remove::<KnownCard>()
-                .remove::<TakenFromSlot>()
+                .remove::<BelongsToSlot>()
                 .insert(ChildOf(slot_entity))
+                //.insert(BelongsToSlot(slot_entity))
                 .insert(Transform::from_xyz(0.0, 0.0, 1.0))
                 .insert(Pickable::default());
 
-            commands
-                .entity(slot_card_entity)
-                .remove::<ChildOf>()
-                .insert(IsHeldBy(*actor))
-                .insert(Transform::from_xyz(0.0, 0.0, 10.0))
-                .remove::<Pickable>();
 
             // if the source card has a TakenFromSlot marker, we give the card
-            // that will now be held also one, otherwise we do not as this interfers
-            // with the turn flow.
-            if taken_from_slot.contains(held_card_entity) {
+            // that will now give it to card that is now held. This will ensure
+            // proper swapping logic when swapping two slot cards as part of a buff.
+            if belongs_to_slot.contains(held_card_entity) {
                 commands
                     .entity(slot_card_entity)
-                    .insert(TakenFromSlot(*slot_id));
+                    .insert(BelongsToSlot(slot_entity));
             }
         }
         ServerMessage::FinishedReplayingHistory { .. } => {}
@@ -1049,11 +1081,10 @@ pub fn process_single_event(
             }
 
             // The game is finished! Anyone holding a card puts it back
-            for (held_card, _) in held.iter() {
-                if let Ok(TakenFromSlot(originating_slot)) = taken_from_slot.get(held_card) {
+            for (held_card, _) in held_by.iter() {
+                if let Ok(BelongsToSlot(originating_slot_entity)) = belongs_to_slot.get(held_card) {
                     // This card is held by someone else trying to claim a dicard opportunity,
                     // but they were to late! Let's put the card back where it came from.
-                    let slot_entity = slot_must_exists!(originating_slot);
                     let held_card_id = card_ids.get(held_card).expect("Card index corrupted");
 
                     commands
@@ -1061,8 +1092,8 @@ pub fn process_single_event(
                         .remove::<IsHeldBy>()
                         .remove::<KnownCard>()
                         .remove::<UnrevealKnownCardTimer>()
-                        .remove::<TakenFromSlot>()
-                        .insert(ChildOf(slot_entity))
+                        .remove::<BelongsToSlot>()
+                        .insert(ChildOf(*originating_slot_entity))
                         .insert(Pickable::default())
                         .insert(Transform::from_xyz(0.0, 0.0, 1.0));
 
@@ -1178,7 +1209,7 @@ mod tests {
 
         fn with_events(mut self, events: &[ServerMessage]) -> TestSetup {
             for event in events {
-                assert!(self.run_event_inplace(event));
+                assert!(self.run_event_inplace(event), "Unexpectedly rejected event in setup phase: {:?}", event);
             }
             self
         }
@@ -1359,13 +1390,13 @@ mod tests {
                     held_card_id: CardId(1),
                     slot_id: SlotId(0),
                 },
-                ServerMessage::DropCardOnDiscardPile {
-                    actor: player0(),
-                    card_id: CardId(0),
-                    offset_x: 0.0,
-                    offset_y: 0.0,
-                    rotation: 0.0,
-                },
+                //ServerMessage::DropCardOnDiscardPile {
+                //    actor: player0(),
+                //    card_id: CardId(0),
+                //    offset_x: 0.0,
+                //    offset_y: 0.0,
+                //    rotation: 0.0,
+                //},
             ])
             .get_world();
 

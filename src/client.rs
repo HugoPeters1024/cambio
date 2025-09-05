@@ -265,64 +265,59 @@ fn set_and_publish_cursor_position(
     }
 }
 
-fn sync_held_by(
-    state: Single<&CambioState>,
-    mut held: Query<(&mut Transform, &IsHeldBy)>,
-    players: Query<&PlayerState>,
-) {
-    for (mut transform, held_by) in held.iter_mut() {
-        if let Some(player_entity) = state.player_index.get(&held_by.0) {
-            if let Ok(player_state) = players.get(*player_entity) {
-                transform.translation.x = player_state.last_mouse_pos_world.x;
-                transform.translation.y = player_state.last_mouse_pos_world.y;
-            }
+fn sync_held_by(mut held: Query<(&mut Transform, &IsHeldBy)>, players: Query<&PlayerState>) {
+    for (mut transform, IsHeldBy(player_entity)) in held.iter_mut() {
+        if let Ok(player_state) = players.get(*player_entity) {
+            transform.translation.x = player_state.last_mouse_pos_world.x;
+            transform.translation.y = player_state.last_mouse_pos_world.y;
         }
     }
 }
 
 fn click_slot_card(
     mut trigger: Trigger<Pointer<Click>>,
-    me: Single<&PlayerId, With<MyPlayer>>,
+    me: Single<Entity, With<MyPlayer>>,
     cards: Query<&CardId>,
-    held: Query<(Entity, &IsHeldBy)>,
+    is_holding: Query<&IsHoldingCard>,
+    belongs_to_slot: Query<&BelongsToSlot>,
     slot_ids: Query<&SlotId>,
-    parents: Query<&ChildOf>,
     mut client: ResMut<Transport>,
 ) {
-    if let Ok(card) = cards.get(trigger.target()) {
-        if let Ok(ChildOf(parent_entity)) = parents.get(trigger.target()) {
-            if let Ok(slot_id) = slot_ids.get(*parent_entity) {
-                match trigger.event().button {
-                    PointerButton::Primary => {
-                        if let Some((held_card, _)) =
-                            held.iter().find(|(_, held_by)| held_by.0 == **me)
-                        {
-                            let held_card_id = *cards.get(held_card).unwrap();
-                            client.queue_claim(ClientClaim::SwapHeldCardWithSlotCard {
-                                slot_id: *slot_id,
-                                slot_card_id: *card,
-                                held_card_id,
-                            });
-                        } else {
-                            client.queue_claim(ClientClaim::PickUpSlotCard {
-                                slot_id: *slot_id,
-                                card_id: *card,
-                            });
-                        }
+    let Ok(card_id) = cards.get(trigger.target()) else {
+        return;
+    };
 
-                        trigger.propagate(false);
-                    }
-                    PointerButton::Secondary => {
-                        client.queue_claim(ClientClaim::LookAtCardAtSlot {
-                            slot_id: *slot_id,
-                            card_id: *card,
-                        });
+    let card_entity = trigger.target();
 
-                        trigger.propagate(false);
-                    }
-                    _ => {}
+    if let Ok(BelongsToSlot(slot_entity)) = belongs_to_slot.get(card_entity) {
+        let slot_id = slot_ids.get(*slot_entity).unwrap();
+        match trigger.event().button {
+            PointerButton::Primary => {
+                if let Ok(is_holding) = is_holding.get(*me) {
+                    let held_card_id = cards.get(is_holding.card_entity()).unwrap();
+                    client.queue_claim(ClientClaim::SwapHeldCardWithSlotCard {
+                        slot_id: *slot_id,
+                        slot_card_id: *card_id,
+                        held_card_id: *held_card_id,
+                    });
+                } else {
+                    client.queue_claim(ClientClaim::PickUpSlotCard {
+                        slot_id: *slot_id,
+                        card_id: *card_id,
+                    });
                 }
+
+                trigger.propagate(false);
             }
+            PointerButton::Secondary => {
+                client.queue_claim(ClientClaim::LookAtCardAtSlot {
+                    slot_id: *slot_id,
+                    card_id: *card_id,
+                });
+
+                trigger.propagate(false);
+            }
+            _ => {}
         }
     }
 }
@@ -331,23 +326,25 @@ fn click_discard_pile(
     trigger: Trigger<Pointer<Click>>,
     discard_pile: Query<Entity, With<DiscardPile>>,
     state: Single<&CambioState>,
-    me: Single<&PlayerId, With<MyPlayer>>,
-    held: Query<(Entity, &IsHeldBy, &CardId)>,
+    me: Single<Entity, With<MyPlayer>>,
+    card_ids: Query<&CardId>,
+    is_holding: Query<&IsHoldingCard>,
     mut client: ResMut<Transport>,
 ) {
     if !discard_pile.contains(trigger.target()) {
         return;
     };
 
-    if let Some((_, _, &card_id)) = held.iter().find(|(_, held_by, _)| &held_by.0 == *me) {
-        client.queue_claim(ClientClaim::DropCardOnDiscardPile { card_id });
+    if let Ok(is_holding) = is_holding.get(*me) {
+        let card_id = card_ids.get(is_holding.card_entity()).unwrap();
+        client.queue_claim(ClientClaim::DropCardOnDiscardPile { card_id: *card_id });
     } else {
         if state.discard_pile.len() >= 1 {
             client.queue_claim(ClientClaim::TakeCardFromDiscardPile {
                 card_id: state.discard_pile[0],
             });
         }
-    };
+    }
 }
 
 fn click_deck(_trigger: Trigger<Pointer<Click>>, mut client: ResMut<Transport>) {
@@ -356,22 +353,23 @@ fn click_deck(_trigger: Trigger<Pointer<Click>>, mut client: ResMut<Transport>) 
 
 fn click_slot(
     mut trigger: Trigger<Pointer<Click>>,
-    me: Single<&PlayerId, With<MyPlayer>>,
-    slots: Query<(Entity, &SlotId), With<CardSlot>>,
-    cards: Query<&CardId>,
-    holders: Query<(Entity, &IsHeldBy)>,
+    me: Single<Entity, With<MyPlayer>>,
+    card_ids: Query<&CardId>,
+    slot_ids: Query<&SlotId>,
+    is_holding: Query<&IsHoldingCard>,
     mut client: ResMut<Transport>,
 ) {
-    if let Ok((_, slot_id)) = slots.get(trigger.target()) {
-        if let Some((holding_card, _)) = holders.iter().filter(|h| h.1.0 == **me).next() {
-            let card_id = *cards.get(holding_card).unwrap();
-            client.queue_claim(ClientClaim::DropCardOnSlot {
-                card_id: card_id,
-                slot_id: *slot_id,
-            });
-            trigger.propagate(false);
-        }
-    }
+    let slot_id = slot_ids.get(trigger.target()).unwrap();
+
+    let Ok(is_holding) = is_holding.get(*me) else {
+        return;
+    };
+    let card_id = card_ids.get(is_holding.card_entity()).unwrap();
+    client.queue_claim(ClientClaim::DropCardOnSlot {
+        card_id: *card_id,
+        slot_id: *slot_id,
+    });
+    trigger.propagate(false);
 }
 
 fn on_player_turn_added(

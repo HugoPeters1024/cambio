@@ -108,6 +108,7 @@ pub fn give_penalty_card(
     transport: ResMut<Transport>,
     children: Query<&Children>,
     card_ids: Query<&CardId>,
+    has_card: Query<&HasCard>,
 ) {
     let Transport::Host(host) = transport.into_inner() else {
         panic!("impossible");
@@ -120,13 +121,21 @@ pub fn give_penalty_card(
 
     let player = players.get(*player_entity).unwrap();
 
-    let free_slot = player.slots.iter().find(|slot_id| {
-        children
-            .iter_descendants(*state.slot_index.get(*slot_id).unwrap())
-            .filter_map(|c| card_ids.get(c).ok())
-            .next()
-            .is_none()
-    });
+    let free_slot = player
+        .slots
+        .iter()
+        .filter(|slot_id| {
+            // Filter out any slots that have cards attached to them but are currently being held.
+            let slot_entity = *state.slot_index.get(*slot_id).unwrap();
+            !has_card.contains(slot_entity)
+        })
+        .find(|slot_id| {
+            children
+                .iter_descendants(*state.slot_index.get(*slot_id).unwrap())
+                .filter_map(|c| card_ids.get(c).ok())
+                .next()
+                .is_none()
+        });
 
     if let Some(free_slot) = free_slot {
         commands.run_system_cached_with(
