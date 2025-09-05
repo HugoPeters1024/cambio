@@ -43,7 +43,7 @@ impl Plugin for ClientPlugin {
 
         app.add_systems(
             OnEnter(GamePhase::Playing),
-            (spawn_cambio_root, setup).chain(),
+            (setup).chain().after(spawn_cambio_root),
         );
 
         app.add_systems(OnEnter(GamePhase::ConnectionLost), setup_connection_lost);

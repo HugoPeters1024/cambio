@@ -6,6 +6,7 @@ use std::{
 use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_matchbox::prelude::PeerId;
 use bevy_tweening::{Animator, Tween, lens::TransformPositionLens};
+use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -1081,7 +1082,11 @@ pub fn process_single_event(
                 state.card_lookup.0.insert(*card_id, *value);
             }
         }
-        ServerMessage::ShuffleDiscardPile { card_ids } => {
+        ServerMessage::ShuffleDiscardPile { card_ids, shuffle_seed } => {
+            if card_ids.is_empty() {
+                reject!("Cannot shuffle an empty discard pile");
+            }
+
             let mut cards_in_discard_pile: HashSet<CardId> =
                 state.discard_pile.iter().copied().collect();
 
@@ -1103,6 +1108,27 @@ pub fn process_single_event(
             state
                 .discard_pile
                 .retain(|card_entity| cards_in_discard_pile.contains(card_entity));
+
+            // These cards were returned to the deck, now we are free to
+            // shuffle the card_id -> known_value assignment here on the host!
+            // This is not strictly necessary but it prevents smart clients to
+            // keep track of which card_ids correspond to which values.
+            let mut ids_to_shuffle: Vec<CardId> = Vec::new();
+            let mut values_to_shuffle: Vec<KnownCard> = Vec::new();
+
+            for card_id in card_ids {
+                let known_card = state.card_lookup.0.remove(card_id).unwrap().clone();
+
+                ids_to_shuffle.push(*card_id);
+                values_to_shuffle.push(known_card);
+            }
+
+            let mut entropy = StdRng::seed_from_u64(*shuffle_seed);
+            ids_to_shuffle.shuffle(&mut entropy);
+
+            for (card_id, known_card) in ids_to_shuffle.iter().zip(values_to_shuffle.iter()) {
+                state.card_lookup.0.insert(*card_id, known_card.clone());
+            }
         }
         ServerMessage::SlapTable { actor } => {
             if !immunity.is_empty() {

@@ -4,14 +4,15 @@ use bevy_matchbox::{
     prelude::{PeerId, PeerState, WebRtcSocketBuilder},
 };
 use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
-use rand::Rng;
+use rand::{Rng, seq::SliceRandom};
 
 use crate::{
     assets::GamePhase,
     cambio::{
         AcceptedMessage, CambioState, CardId, PlayerId, PlayerState, RejectionReason, SlotHasCard,
-        process_single_event,
+        process_single_event, spawn_cambio_root,
     },
+    cards::KnownCard,
     host_utils::host_eval_event,
     messages::{
         ClientClaim, ClientClaimUnreliable, RELIABLE_CHANNEL, ServerMessage,
@@ -161,7 +162,7 @@ impl Plugin for TransportPlugin {
 
         app.add_systems(
             OnEnter(GamePhase::Playing),
-            (host_initializes_its_player).chain(),
+            (spawn_cambio_root, host_initializes_its_player).chain(),
         );
 
         app.add_systems(
@@ -510,27 +511,29 @@ fn host_persists_and_broadcasts_accepted_events(
     };
     let peers = host.socket.connected_peers().collect::<Vec<_>>();
 
-    let mut broadcast_and_store = |msg: ServerMessage| {
-        for peer_id in peers.iter() {
-            let player_id = state
-                .player_index
-                .keys()
-                .find(|player_id| player_id.peer_id == *peer_id)
-                .unwrap();
+    macro_rules! broadcast_and_store {
+        ($msg:expr) => {
+            for peer_id in peers.iter() {
+                let player_id = state
+                    .player_index
+                    .keys()
+                    .find(|player_id| player_id.peer_id == *peer_id)
+                    .unwrap();
 
-            let packet = bincode::serde::encode_to_vec(
-                &msg.redacted_for(player_id),
-                bincode::config::standard(),
-            )
-            .unwrap()
-            .into_boxed_slice();
+                let packet = bincode::serde::encode_to_vec(
+                    &$msg.redacted_for(player_id),
+                    bincode::config::standard(),
+                )
+                .unwrap()
+                .into_boxed_slice();
 
-            host.socket
-                .channel_mut(RELIABLE_CHANNEL)
-                .send(packet, *peer_id);
-        }
-        host.accepted_history.push(msg.clone());
-    };
+                host.socket
+                    .channel_mut(RELIABLE_CHANNEL)
+                    .send(packet, *peer_id);
+            }
+            host.accepted_history.push($msg);
+        };
+    }
 
     for AcceptedMessage(msg) in accepted.read() {
         // JIT publish the card values to the clients. We are the server so we don't
@@ -539,14 +542,14 @@ fn host_persists_and_broadcasts_accepted_events(
         match msg {
             ServerMessage::TakeFreshCardFromDeck { actor, card_id }
             | ServerMessage::RevealCardAtSlot { actor, card_id, .. } => {
-                broadcast_and_store(ServerMessage::PublishCardForPlayer {
+                broadcast_and_store!(ServerMessage::PublishCardForPlayer {
                     player_id: *actor,
                     card_id: *card_id,
                     value: Some(state.card_lookup.0.get(&*card_id).unwrap().clone()),
                 });
             }
             ServerMessage::DropCardOnDiscardPile { card_id, .. } => {
-                broadcast_and_store(ServerMessage::PublishCardPublically {
+                broadcast_and_store!(ServerMessage::PublishCardPublically {
                     card_id: *card_id,
                     value: state.card_lookup.0.get(&*card_id).unwrap().clone(),
                 });
@@ -554,7 +557,7 @@ fn host_persists_and_broadcasts_accepted_events(
             _ => (),
         }
 
-        broadcast_and_store(msg.clone());
+        broadcast_and_store!(msg.clone());
     }
 }
 

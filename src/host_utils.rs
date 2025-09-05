@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
-use rand::seq::SliceRandom;
+use rand::{seq::SliceRandom, RngCore};
 use strum::IntoEnumIterator;
 
 use crate::{
@@ -255,14 +255,15 @@ fn trigger_host_server_events(
     states: Query<&CambioState>,
     player_at_turn: Query<(Entity, &TurnState)>,
     immunity: Query<&HasImmunity>,
+    mut entropy: GlobalEntropy<WyRand>
 ) {
     let state = states.get(*root).unwrap();
     if state.free_cards.is_empty() {
         commands.run_system_cached_with(
-            // TODO: actually update the card value lookup
             host_eval_event,
             ServerMessage::ShuffleDiscardPile {
                 card_ids: state.discard_pile.iter().skip(1).cloned().collect(),
+                shuffle_seed: entropy.next_u64(),
             },
         );
     }

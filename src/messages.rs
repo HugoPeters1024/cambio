@@ -119,6 +119,9 @@ pub enum ServerMessage {
     },
     ShuffleDiscardPile {
         card_ids: Vec<CardId>,
+        // The shuffle seed must be determistic
+        // for replaying purposes
+        shuffle_seed: u64,
     },
     SlapTable {
         actor: PlayerId,
