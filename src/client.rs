@@ -359,7 +359,9 @@ fn click_slot(
     is_holding: Query<&IsHoldingCard>,
     mut client: ResMut<Transport>,
 ) {
-    let slot_id = slot_ids.get(trigger.target()).unwrap();
+    let Ok(slot_id) = slot_ids.get(trigger.target()) else {
+        return;
+    };
 
     let Ok(is_holding) = is_holding.get(*me) else {
         return;

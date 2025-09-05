@@ -9,11 +9,12 @@ use rand::Rng;
 use crate::{
     assets::GamePhase,
     cambio::{
-        process_single_event, AcceptedMessage, CambioState, PlayerId, PlayerState, RejectedMessage
+        AcceptedMessage, CambioState, PlayerId, PlayerState, RejectedMessage, process_single_event,
     },
     host_utils::{give_penalty_card, host_eval_event},
     messages::{
-        ClientClaim, ClientClaimUnreliable, ServerMessage, ServerMessageUnreliable, RELIABLE_CHANNEL, UNRELIABLE_CHANNEL
+        ClientClaim, ClientClaimUnreliable, RELIABLE_CHANNEL, ServerMessage,
+        ServerMessageUnreliable, UNRELIABLE_CHANNEL,
     },
     utils::Seq,
 };

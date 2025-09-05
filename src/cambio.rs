@@ -320,7 +320,10 @@ pub fn process_single_event(
                     );
                 }
             } else {
-                reject!("Player {} is not holding any card", $player_id.player_number());
+                reject!(
+                    "Player {} is not holding any card",
+                    $player_id.player_number()
+                );
             }
         }};
     }
@@ -914,12 +917,12 @@ pub fn process_single_event(
             let player_entity = player_must_exists!(actor);
             let slot_entity = slot_must_exists!(slot_id);
             let held_card_entity = card_must_exists!(held_card_id);
+            let slot_card_entity = card_must_exists!(slot_card_id);
             player_must_be_holding_card!(actor, held_card_id);
             slot_must_have_card!(slot_id, slot_card_id);
+            card_must_not_be_held!(slot_card_id);
             slot_owner_must_not_be_immune!(slot_id);
             let slot_owner = slot_owner!(slot_id);
-
-            let slot_card_entity = card_must_exists!(slot_card_id);
 
             if may_give_card_to.contains(player_entity) {
                 reject!("Giving a card to another players is a buff that takes priority.");
@@ -951,7 +954,8 @@ pub fn process_single_event(
                 TurnState::HasBuff(TurnBuff::MaySwapTwoCards {
                     has_swapped_from_slot,
                 }) => {
-                    let Ok(BelongsToSlot(originating_slot_entity)) = belongs_to_slot.get(held_card_entity)
+                    let Ok(BelongsToSlot(originating_slot_entity)) =
+                        belongs_to_slot.get(held_card_entity)
                     else {
                         reject!("Can only swap cards taken from a player at this point");
                     };
@@ -980,7 +984,8 @@ pub fn process_single_event(
                         reject!("Already swapped two cards");
                     }
 
-                    let Ok(BelongsToSlot(originating_slot_entity)) = belongs_to_slot.get(held_card_entity)
+                    let Ok(BelongsToSlot(originating_slot_entity)) =
+                        belongs_to_slot.get(held_card_entity)
                     else {
                         reject!("Can only swap cards taken from a player at this point");
                     };
@@ -996,6 +1001,13 @@ pub fn process_single_event(
                     });
                 }
             }
+
+            // make sure we inform the player that the card it is holding
+            // is no longer the correct entity. If we do not do this we will get
+            // a panic. Note that will not be necessary anymore in bevy 0.17:
+            // https://github.com/bevyengine/bevy/pull/20232
+            commands.entity(player_entity).remove::<IsHoldingCard>();
+            commands.entity(slot_entity).remove::<HasCard>();
 
             // pick up the slot card
             commands
@@ -1013,18 +1025,17 @@ pub fn process_single_event(
                 .remove::<KnownCard>()
                 .remove::<BelongsToSlot>()
                 .insert(ChildOf(slot_entity))
-                //.insert(BelongsToSlot(slot_entity))
+                .insert(BelongsToSlot(slot_entity))
                 .insert(Transform::from_xyz(0.0, 0.0, 1.0))
                 .insert(Pickable::default());
-
 
             // if the source card has a TakenFromSlot marker, we give the card
             // that will now give it to card that is now held. This will ensure
             // proper swapping logic when swapping two slot cards as part of a buff.
-            if belongs_to_slot.contains(held_card_entity) {
+            if let Ok(BelongsToSlot(origin_slot)) = belongs_to_slot.get(held_card_entity) {
                 commands
                     .entity(slot_card_entity)
-                    .insert(BelongsToSlot(slot_entity));
+                    .insert(BelongsToSlot(*origin_slot));
             }
         }
         ServerMessage::FinishedReplayingHistory { .. } => {}
@@ -1209,7 +1220,11 @@ mod tests {
 
         fn with_events(mut self, events: &[ServerMessage]) -> TestSetup {
             for event in events {
-                assert!(self.run_event_inplace(event), "Unexpectedly rejected event in setup phase: {:?}", event);
+                assert!(
+                    self.run_event_inplace(event),
+                    "Unexpectedly rejected event in setup phase: {:?}",
+                    event
+                );
             }
             self
         }
@@ -1390,13 +1405,13 @@ mod tests {
                     held_card_id: CardId(1),
                     slot_id: SlotId(0),
                 },
-                //ServerMessage::DropCardOnDiscardPile {
-                //    actor: player0(),
-                //    card_id: CardId(0),
-                //    offset_x: 0.0,
-                //    offset_y: 0.0,
-                //    rotation: 0.0,
-                //},
+                ServerMessage::DropCardOnDiscardPile {
+                    actor: player0(),
+                    card_id: CardId(0),
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                    rotation: 0.0,
+                },
             ])
             .get_world();
 
@@ -1551,5 +1566,48 @@ mod tests {
             offset_y: 0.0,
             rotation: 0.0,
         });
+    }
+
+    #[test]
+    fn flow_use_swap_buff() {
+        TestSetup::one_player_two_cards_start_of_turn()
+            .with_all_cards_known()
+            .with_events(&[
+                ServerMessage::PublishCardForPlayer {
+                    player_id: player0(),
+                    card_id: CardId(2),
+                    value: Some(KnownCard {
+                        rank: Rank::Jack,
+                        suit: Suit::Hearts,
+                    }),
+                },
+                ServerMessage::TakeFreshCardFromDeck {
+                    actor: player0(),
+                    card_id: CardId(2),
+                },
+                ServerMessage::DropCardOnDiscardPile {
+                    actor: player0(),
+                    card_id: CardId(2),
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                    rotation: 0.0,
+                },
+                ServerMessage::PickUpSlotCard {
+                    actor: player0(),
+                    slot_id: SlotId(0),
+                    card_id: CardId(0),
+                },
+                ServerMessage::SwapHeldCardWithSlotCard {
+                    actor: player0(),
+                    held_card_id: CardId(0),
+                    slot_card_id: CardId(1),
+                    slot_id: SlotId(1),
+                },
+                ServerMessage::DropCardOnSlot {
+                    actor: player0(),
+                    card_id: CardId(1),
+                    slot_id: SlotId(0),
+                },
+            ]);
     }
 }

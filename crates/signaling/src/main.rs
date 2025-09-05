@@ -2,9 +2,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tracing::info;
 
 use axum::{http::StatusCode, response::IntoResponse, routing::get};
+use clap::Parser;
 use matchbox_signaling::SignalingServerBuilder;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use clap::Parser;
 
 use crate::{
     state::{RoomId, ServerState},
@@ -17,8 +17,9 @@ mod topology;
 fn setup_logging() {
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "matchbox_server=info,tower_http=debug,webrtc=debug,signaling=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "matchbox_server=info,tower_http=debug,webrtc=debug,signaling=info".into()
+            }),
         )
         .with(
             tracing_subscriber::fmt::layer()
