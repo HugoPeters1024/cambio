@@ -192,6 +192,7 @@ pub fn process_single_event(
     macro_rules! reject {
         ($($arg:tt)*) => {
             warn!($($arg)*);
+            println!($($arg)*);
             return None;
         };
     }
@@ -702,6 +703,10 @@ pub fn process_single_event(
                         .insert(MayGiveCardTo(*stolen_from));
                 }
 
+                // Mark the card as used for a discard opportunity, preventing others
+                // from doing it again on the same card.
+                commands.entity(card_entity).insert(WasMatchingDiscard);
+
                 // Player is has claimed a discard opportunity!
                 // The other players holding such a card were too late and we put the card back
                 for (held_card, _) in held.iter().filter(|(_, held_by)| held_by.0 != *actor) {
@@ -1107,7 +1112,7 @@ mod tests {
 
             let card_entity = self
                 .world
-                .spawn((SomeCard, card_id, ChildOf(discard_pile_entity)))
+                .spawn((SomeCard, card_id, value, ChildOf(discard_pile_entity)))
                 .id();
 
             let mut state = self
@@ -1184,6 +1189,35 @@ mod tests {
                     actor: player0(),
                     slot_id: SlotId(0),
                     card_id: CardId(0),
+                },
+                ServerMessage::PlayerAtTurn {
+                    player_id: player0(),
+                },
+            ])
+        }
+
+        fn one_player_two_cards_start_of_turn() -> TestSetup {
+            TestSetup::new().with_events(&[
+                ServerMessage::PlayerConnected {
+                    player_id: player0(),
+                },
+                ServerMessage::ReceiveFreshSlot {
+                    actor: player0(),
+                    slot_id: SlotId(0),
+                },
+                ServerMessage::ReceiveFreshCardFromDeck {
+                    actor: player0(),
+                    slot_id: SlotId(0),
+                    card_id: CardId(0),
+                },
+                ServerMessage::ReceiveFreshSlot {
+                    actor: player0(),
+                    slot_id: SlotId(1),
+                },
+                ServerMessage::ReceiveFreshCardFromDeck {
+                    actor: player0(),
+                    slot_id: SlotId(1),
+                    card_id: CardId(1),
                 },
                 ServerMessage::PlayerAtTurn {
                     player_id: player0(),
@@ -1381,6 +1415,62 @@ mod tests {
         env.rejects(&ServerMessage::TakeFreshCardFromDeck {
             actor: player0(),
             card_id: CardId(52),
+        });
+    }
+
+    #[test]
+    fn cannot_use_two_discard_opportunities() {
+        let mut env = TestSetup::one_player_two_cards_start_of_turn()
+            .with_card_on_discard_pile(
+                CardId(30),
+                KnownCard {
+                    rank: Rank::Ace,
+                    suit: Suit::Hearts,
+                },
+            )
+            .with_events(&[
+                ServerMessage::PublishCardPublically {
+                    card_id: CardId(0),
+                    value: KnownCard {
+                        rank: Rank::Ace,
+                        suit: Suit::Spades,
+                    },
+                },
+                ServerMessage::PublishCardPublically {
+                    card_id: CardId(1),
+                    value: KnownCard {
+                        rank: Rank::Ace,
+                        suit: Suit::Diamonds,
+                    },
+                },
+            ]);
+
+        env.accepts(&ServerMessage::PickUpSlotCard {
+            actor: player0(),
+            slot_id: SlotId(0),
+            card_id: CardId(0),
+        });
+
+        env.accepts(&ServerMessage::DropCardOnDiscardPile {
+            actor: player0(),
+            card_id: CardId(0),
+            offset_x: 0.0,
+            offset_y: 0.0,
+            rotation: 0.0,
+        });
+
+        env.accepts(&ServerMessage::PickUpSlotCard {
+            actor: player0(),
+            slot_id: SlotId(1),
+            card_id: CardId(1),
+        });
+
+        env.rejects(&ServerMessage::DropCardOnDiscardPile {
+            actor: player0(),
+            card_id: CardId(1),
+            offset_x: 0.0,
+            offset_y: 0.0,
+            rotation: 0.0,
         });
     }
 }

@@ -17,7 +17,7 @@ fn setup_logging() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "matchbox_server=info,tower_http=debug,signaling=info".into()),
+                .unwrap_or_else(|_| "matchbox_server=info,tower_http=debug,webrtc=debug,signaling=info".into()),
         )
         .with(
             tracing_subscriber::fmt::layer()

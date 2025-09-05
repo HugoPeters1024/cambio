@@ -77,6 +77,7 @@ impl SignalingTopology<NoCallbacks, ServerState> for RoomedClientServerTopology 
                 };
 
                 let message = Message::Text(JsonPeerEvent::NewPeer(peer_id).to_string().into());
+                info!("Trying to inform the host of this new peer...");
                 match try_send(&room.host.1, message) {
                     Err(err) => {
                         error!("Failed to send message to host: {}", err);
