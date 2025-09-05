@@ -542,18 +542,31 @@ fn effects_for_accepted_messages(
                     *catched_up = true;
                 }
             }
-            ServerMessage::ReceiveFreshCardFromDeck { card_id, .. } => {
-                if *catched_up && let Some(card_entity) = state.card_index.get(card_id) {
-                    commands
-                        .entity(*card_entity)
-                        .insert(Animator::new(Tween::new(
-                            EaseFunction::CubicOut,
-                            Duration::from_millis(500),
-                            TransformScaleLens {
-                                start: Vec3::ZERO,
-                                end: Vec3::ONE,
-                            },
-                        )));
+            ServerMessage::ReceiveFreshCardFromDeck {
+                is_penalty,
+                card_id,
+                ..
+            } => {
+                if *catched_up {
+                    if let Some(card_entity) = state.card_index.get(card_id) {
+                        commands
+                            .entity(*card_entity)
+                            .insert(Animator::new(Tween::new(
+                                EaseFunction::CubicOut,
+                                Duration::from_millis(500),
+                                TransformScaleLens {
+                                    start: Vec3::ZERO,
+                                    end: Vec3::ONE,
+                                },
+                            )));
+                    }
+
+                    if *is_penalty {
+                        commands.spawn((
+                            AudioPlayer::new(assets.wrong_sound.clone()),
+                            PlaybackSettings::DESPAWN,
+                        ));
+                    }
                 }
             }
             ServerMessage::TakeFreshCardFromDeck { .. } => {

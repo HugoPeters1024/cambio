@@ -39,11 +39,55 @@ pub fn host_eval_event(
     }
 
     commands.run_system_cached_with(
-        process_single_event.pipe(|_: In<Option<ServerMessage>>| ()),
+        process_single_event.pipe(
+            |In(result): In<Result<ServerMessage, RejectionReason>>, mut commands: Commands| {
+                match result {
+                    Ok(_) => (),
+                    Err(rejection) => {
+                        commands.run_system_cached_with(handle_rejections, rejection);
+                    }
+                };
+            },
+        ),
         (root, msg),
     );
 
     commands.run_system_cached_with(trigger_host_server_events, root);
+}
+
+pub fn handle_rejections(
+    In(rejection): In<RejectionReason>,
+    mut commands: Commands,
+    state: Single<&CambioState>,
+    slot_ids: Query<&SlotId>,
+    card_has_slot: Query<&BelongsToSlot>,
+) {
+    match rejection {
+        RejectionReason::Other(_) => (),
+        RejectionReason::DiscardWrongRank { actor, card_id } => {
+            let card_entity = state.card_index[&card_id];
+            let slot_entity = card_has_slot.get(card_entity).unwrap().0;
+            let slot_id = slot_ids.get(slot_entity).unwrap();
+            commands.run_system_cached_with(
+                host_eval_event,
+                ServerMessage::RevealCardAtSlot {
+                    actor,
+                    card_id,
+                    slot_id: *slot_id,
+                    check_turn: false,
+                },
+            );
+            commands.run_system_cached_with(
+                host_eval_event,
+                ServerMessage::ReturnHeldCardToSlot {
+                    actor,
+                    card_id,
+                    slot_id: *slot_id,
+                },
+            );
+            commands.run_system_cached_with(give_penalty_card, actor);
+        }
+    }
 }
 
 pub fn setup_new_player(
@@ -110,7 +154,7 @@ pub fn give_penalty_card(
     transport: ResMut<Transport>,
     children: Query<&Children>,
     card_ids: Query<&CardId>,
-    has_card: Query<&HasCard>,
+    has_card: Query<&SlotHasCard>,
 ) {
     let Transport::Host(host) = transport.into_inner() else {
         panic!("impossible");
@@ -146,6 +190,7 @@ pub fn give_penalty_card(
                 actor: player_id,
                 slot_id: *free_slot,
                 card_id: state.free_cards[0],
+                is_penalty: true,
             },
         );
     } else {
@@ -168,6 +213,7 @@ pub fn give_penalty_card(
                 actor: player_id,
                 slot_id: SlotId(fresh_slot_id),
                 card_id: state.free_cards[0],
+                is_penalty: true,
             },
         );
     }
@@ -185,6 +231,7 @@ pub fn give_card_to_player(
             actor: player_id,
             slot_id,
             card_id: front_card,
+            is_penalty: false,
         },
     );
 

@@ -1,7 +1,11 @@
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashSet, VecDeque},
+    time::Duration,
+};
 
 use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_matchbox::prelude::PeerId;
+use bevy_tweening::{Animator, Tween, lens::TransformPositionLens};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -57,21 +61,21 @@ pub struct CardId(pub u64);
 pub struct SlotId(pub u64);
 
 #[derive(Component)]
-#[relationship(relationship_target = HasCard)]
+#[relationship(relationship_target = SlotHasCard)]
 pub struct BelongsToSlot(pub Entity);
 
 #[derive(Component)]
 #[relationship_target(relationship = BelongsToSlot)]
-pub struct HasCard(Entity);
+pub struct SlotHasCard(Entity);
 
-impl HasCard {
+impl SlotHasCard {
     pub fn card_entity(&self) -> Entity {
         self.0
     }
 }
 
 #[derive(Component)]
-pub struct UnrevealKnownCardTimer(Timer);
+pub struct UnrevealKnownCardTimer(pub Timer);
 
 #[derive(Component)]
 pub struct MyPlayer;
@@ -138,10 +142,10 @@ pub struct CambioState {
 #[derive(Event)]
 pub struct AcceptedMessage(pub ServerMessage);
 
-#[derive(Event)]
-pub struct RejectedMessage {
-    pub msg: ServerMessage,
-    pub foul_play: bool,
+#[derive(Debug, Clone)]
+pub enum RejectionReason {
+    Other(String),
+    DiscardWrongRank { actor: PlayerId, card_id: CardId },
 }
 
 #[derive(Clone, Default)]
@@ -152,7 +156,6 @@ pub struct CambioPlugin;
 impl Plugin for CambioPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<AcceptedMessage>();
-        app.add_event::<RejectedMessage>();
         app.add_systems(Update, handle_unreveal_timer);
     }
 }
@@ -205,10 +208,10 @@ pub fn process_single_event(
     In((root, msg)): In<(Entity, ServerMessage)>,
     mut states: Query<&mut CambioState>,
     mut players: Query<(&PlayerId, &mut PlayerState)>,
-    held_by: Query<(Entity, &IsHeldBy)>,
-    is_holding: Query<&IsHoldingCard>,
+    global_transforms: Query<&GlobalTransform>,
+    (held_by, is_holding): (Query<(Entity, &IsHeldBy)>, Query<&IsHoldingCard>),
     my_player: Query<Entity, With<MyPlayer>>,
-    (belongs_to_slot, has_card): (Query<&BelongsToSlot>, Query<&HasCard>),
+    (belongs_to_slot, has_card): (Query<&BelongsToSlot>, Query<&SlotHasCard>),
     (card_ids, slot_ids): (Query<&CardId>, Query<&SlotId>),
     known_cards: Query<&KnownCard>,
     children: Query<&Children>,
@@ -216,30 +219,16 @@ pub fn process_single_event(
     may_give_card_to: Query<&MayGiveCardTo>,
     immunity: Query<&HasImmunity>,
     mut accepted: EventWriter<AcceptedMessage>,
-    mut rejected: EventWriter<RejectedMessage>,
     mut player_at_turn: Query<(Entity, &mut TurnState)>,
     mut commands: Commands,
-) -> Option<ServerMessage> {
+) -> Result<ServerMessage, RejectionReason> {
     info!("Processing message: {:?}", msg);
-
-    macro_rules! reject_generic {
-        ($foul_play: expr, $($arg:tt)*) => {
-            rejected.write(RejectedMessage { msg: msg.clone(), foul_play: $foul_play });
-            warn!($($arg)*);
-            println!($($arg)*);
-            return None;
-        };
-    }
 
     macro_rules! reject {
         ($($arg:tt)*) => {
-            reject_generic!(false, $($arg)*);
-        };
-    }
-
-    macro_rules! reject_foul {
-        ($($arg:tt)*) => {
-            reject_generic!(true, $($arg)*);
+            warn!($($arg)*);
+            println!($($arg)*);
+            return Err(RejectionReason::Other(format!($($arg)*)));
         };
     }
 
@@ -298,10 +287,12 @@ pub fn process_single_event(
         ($slot_id: expr, $card_id: expr) => {{
             let slot_entity = slot_must_exists!($slot_id);
             let card_entity = card_must_exists!($card_id);
-            if let Ok(HasCard(has_card)) = has_card.get(slot_entity) {
+            if let Ok(SlotHasCard(has_card)) = has_card.get(slot_entity) {
                 if *has_card != card_entity {
                     reject!("Slot {} does not have card {}.", $slot_id.0, $card_id.0);
                 }
+            } else {
+                reject!("Slot {} does not have any card.", $slot_id.0);
             }
         }};
     }
@@ -417,7 +408,7 @@ pub fn process_single_event(
             }
 
             let pid = player_id.player_index as usize;
-            let x = -200.0 + 200.0 * (pid % 3) as f32;
+            let x = -250.0 + 250.0 * (pid % 3) as f32;
             let y = -150.0 + 300.0 * (pid / 3) as f32;
 
             let player_entity = commands
@@ -480,8 +471,8 @@ pub fn process_single_event(
                 _ => unreachable!(),
             };
 
-            const SLOT_WIDTH: f32 = DESIRED_CARD_WIDTH + 10.0;
-            const SLOT_HEIGHT: f32 = DESIRED_CARD_HEIGHT + 10.0;
+            const SLOT_WIDTH: f32 = DESIRED_CARD_WIDTH + 8.0;
+            const SLOT_HEIGHT: f32 = DESIRED_CARD_HEIGHT + 8.0;
 
             let x = SLOT_WIDTH * slot_x as f32 - SLOT_WIDTH / 2.0;
             let y = SLOT_HEIGHT * slot_y as f32 - SLOT_HEIGHT / 2.0;
@@ -503,6 +494,7 @@ pub fn process_single_event(
             actor,
             card_id,
             slot_id,
+            ..
         } => {
             let _ = player_must_exists!(actor);
             let slot_entity = slot_must_exists!(slot_id);
@@ -522,6 +514,38 @@ pub fn process_single_event(
                 .id();
 
             state.card_index.insert(*card_id, card_entity);
+        }
+        ServerMessage::ReturnHeldCardToSlot {
+            actor,
+            card_id,
+            slot_id,
+        } => {
+            let _player_entity = player_must_exists!(actor);
+            let card_entity = card_must_exists!(card_id);
+            let slot_entity = slot_must_exists!(slot_id);
+            slot_must_have_card!(slot_id, card_id);
+
+            let global_position_card = global_transforms.get(card_entity).unwrap().translation();
+            let global_position_slot = global_transforms.get(slot_entity).unwrap().translation();
+
+            let slot_to_card = global_position_card - global_position_slot;
+
+            let tween = Tween::new(
+                EaseFunction::CubicOut,
+                Duration::from_millis(600),
+                TransformPositionLens {
+                    start: slot_to_card,
+                    end: Vec3::new(0.0, 0.0, 1.0),
+                },
+            );
+
+            commands
+                .entity(card_entity)
+                .remove::<IsHeldBy>()
+                .insert(Transform::from_xyz(0.0, 0.0, 1.0))
+                .insert(Animator::new(tween))
+                .insert(ChildOf(slot_entity))
+                .insert(Pickable::default());
         }
         ServerMessage::PickUpSlotCard {
             actor,
@@ -653,7 +677,6 @@ pub fn process_single_event(
                 .entity(card_entity)
                 .remove::<IsHeldBy>()
                 .remove::<KnownCard>()
-                .remove::<BelongsToSlot>()
                 .insert(ChildOf(slot_entity))
                 .insert(Pickable::default())
                 .insert(Transform::from_xyz(0.0, 0.0, 1.0));
@@ -779,7 +802,10 @@ pub fn process_single_event(
                 };
 
                 if top_card.rank != known_value.rank {
-                    reject_foul!("Cannot discard a card of a different rank!");
+                    return Err(RejectionReason::DiscardWrongRank {
+                        actor: *actor,
+                        card_id: *card_id,
+                    });
                 }
 
                 let stolen_from = slot_owner!(origin_slot_id);
@@ -1015,7 +1041,7 @@ pub fn process_single_event(
             // a panic. Note that will not be necessary anymore in bevy 0.17:
             // https://github.com/bevyengine/bevy/pull/20232
             commands.entity(player_entity).remove::<IsHoldingCard>();
-            commands.entity(slot_entity).remove::<HasCard>();
+            commands.entity(slot_entity).remove::<SlotHasCard>();
 
             // pick up the slot card
             commands
@@ -1158,7 +1184,7 @@ pub fn process_single_event(
 
     // If we're still here then we accepted the message.
     accepted.write(AcceptedMessage(msg.clone()));
-    Some(msg)
+    Ok(msg)
 }
 
 #[cfg(test)]
@@ -1192,7 +1218,6 @@ mod tests {
         fn new() -> TestSetup {
             let mut world = World::new();
             EventRegistry::register_event::<AcceptedMessage>(&mut world);
-            EventRegistry::register_event::<RejectedMessage>(&mut world);
 
             world.run_system_cached(spawn_cambio_root).unwrap();
             let root = world
@@ -1265,7 +1290,7 @@ mod tests {
             self.world
                 .run_system_cached_with(process_single_event, (self.root, event.clone()))
                 .unwrap()
-                .is_some()
+                .is_ok()
         }
 
         fn with_all_cards_known(mut self) -> TestSetup {
@@ -1295,6 +1320,7 @@ mod tests {
                     actor: player0(),
                     slot_id: SlotId(0),
                     card_id: CardId(0),
+                    is_penalty: false,
                 },
                 ServerMessage::PlayerAtTurn {
                     player_id: player0(),
@@ -1315,6 +1341,7 @@ mod tests {
                     actor: player0(),
                     slot_id: SlotId(0),
                     card_id: CardId(0),
+                    is_penalty: false,
                 },
                 ServerMessage::ReceiveFreshSlot {
                     actor: player0(),
@@ -1324,6 +1351,7 @@ mod tests {
                     actor: player0(),
                     slot_id: SlotId(1),
                     card_id: CardId(1),
+                    is_penalty: false,
                 },
                 ServerMessage::PlayerAtTurn {
                     player_id: player0(),
@@ -1344,6 +1372,7 @@ mod tests {
                     actor: player1(),
                     slot_id: SlotId(1),
                     card_id: CardId(1),
+                    is_penalty: false,
                 },
             ])
         }

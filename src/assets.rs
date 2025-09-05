@@ -50,6 +50,9 @@ pub struct GameAssets {
 
     #[asset(path = "ready_1.ogg")]
     pub slap_table_sound: Handle<AudioSource>,
+
+    #[asset(path = "wrong.ogg")]
+    pub wrong_sound: Handle<AudioSource>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Default, States)]

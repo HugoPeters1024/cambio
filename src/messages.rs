@@ -62,6 +62,7 @@ pub enum ServerMessage {
         actor: PlayerId,
         slot_id: SlotId,
         card_id: CardId,
+        is_penalty: bool,
     },
     RevealCardAtSlot {
         actor: PlayerId,
@@ -121,6 +122,11 @@ pub enum ServerMessage {
     },
     SlapTable {
         actor: PlayerId,
+    },
+    ReturnHeldCardToSlot {
+        actor: PlayerId,
+        slot_id: SlotId,
+        card_id: CardId,
     },
     GameWillFinishIn(Duration),
     GameFinished {

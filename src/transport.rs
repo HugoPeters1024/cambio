@@ -9,10 +9,10 @@ use rand::Rng;
 use crate::{
     assets::GamePhase,
     cambio::{
-        AcceptedMessage, CambioState, CardId, HasCard, PlayerId, PlayerState, RejectedMessage,
+        AcceptedMessage, CambioState, CardId, PlayerId, PlayerState, RejectionReason, SlotHasCard,
         process_single_event,
     },
-    host_utils::{give_penalty_card, host_eval_event},
+    host_utils::host_eval_event,
     messages::{
         ClientClaim, ClientClaimUnreliable, RELIABLE_CHANNEL, ServerMessage,
         ServerMessageUnreliable, UNRELIABLE_CHANNEL,
@@ -174,7 +174,6 @@ impl Plugin for TransportPlugin {
                 host_processes_reliable_claims,
                 host_processes_unreliable_claims,
                 host_persists_and_broadcasts_accepted_events,
-                host_may_penalize_rejected_events,
                 client_receives_reliable_results,
                 client_receives_unreliable_results,
             )
@@ -299,7 +298,7 @@ fn host_ends_game_on_timer(
     transport: ResMut<Transport>,
     players: Query<&PlayerState>,
     card_ids: Query<&CardId>,
-    has_card: Query<&HasCard>,
+    has_card: Query<&SlotHasCard>,
 ) {
     let Transport::Host(_) = transport.into_inner() else {
         return;
@@ -559,27 +558,6 @@ fn host_persists_and_broadcasts_accepted_events(
     }
 }
 
-fn host_may_penalize_rejected_events(
-    mut commands: Commands,
-    transport: ResMut<Transport>,
-    mut rejected: EventReader<RejectedMessage>,
-) {
-    let Transport::Host(_) = transport.into_inner() else {
-        return;
-    };
-
-    for rejected in rejected.read() {
-        match rejected.msg {
-            ServerMessage::DropCardOnDiscardPile { actor, .. } => {
-                if rejected.foul_play {
-                    commands.run_system_cached_with(give_penalty_card, actor);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
 fn client_receives_reliable_results(
     mut commands: Commands,
     transport: ResMut<Transport>,
@@ -596,7 +574,7 @@ fn client_receives_reliable_results(
                 .0;
 
         commands.run_system_cached_with(
-            process_single_event.pipe(|_: In<Option<ServerMessage>>| ()),
+            process_single_event.pipe(|_: In<Result<ServerMessage, RejectionReason>>| ()),
             (*root, message),
         );
     }
