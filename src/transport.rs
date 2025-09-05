@@ -1,4 +1,4 @@
-use bevy::{ecs::system::SystemId, prelude::*};
+use bevy::{ecs::system::SystemId, platform::collections::HashMap, prelude::*};
 use bevy_matchbox::{
     MatchboxSocket,
     prelude::{PeerId, PeerState, WebRtcSocketBuilder},
@@ -9,7 +9,8 @@ use rand::Rng;
 use crate::{
     assets::GamePhase,
     cambio::{
-        AcceptedMessage, CambioState, PlayerId, PlayerState, RejectedMessage, process_single_event,
+        AcceptedMessage, CambioState, CardId, HasCard, PlayerId, PlayerState, RejectedMessage,
+        process_single_event,
     },
     host_utils::{give_penalty_card, host_eval_event},
     messages::{
@@ -167,6 +168,8 @@ impl Plugin for TransportPlugin {
             Update,
             (
                 both_sync_peers,
+                both_update_state_timer,
+                host_ends_game_on_timer,
                 host_receives_claims_from_clients,
                 host_processes_reliable_claims,
                 host_processes_unreliable_claims,
@@ -280,6 +283,52 @@ fn both_sync_peers(
                     }
                 }
             }
+        }
+    }
+}
+
+fn both_update_state_timer(mut state: Single<&mut CambioState>, time: Res<Time>) {
+    if let Some(timer) = &mut state.game_will_finish_in {
+        timer.tick(time.delta());
+    }
+}
+
+fn host_ends_game_on_timer(
+    mut commands: Commands,
+    state: Single<&CambioState>,
+    transport: ResMut<Transport>,
+    players: Query<&PlayerState>,
+    card_ids: Query<&CardId>,
+    has_card: Query<&HasCard>,
+) {
+    let Transport::Host(_) = transport.into_inner() else {
+        return;
+    };
+
+    if let Some(timer) = state.game_will_finish_in.as_ref() {
+        if timer.finished() {
+            let mut final_score = HashMap::new();
+
+            for (player_id, player_entity) in state.player_index.iter() {
+                let player_state = players.get(*player_entity).unwrap();
+                let mut score: i32 = 0;
+                for slot_id in player_state.slots.iter() {
+                    if let Ok(has_card) = has_card.get(*state.slot_index.get(slot_id).unwrap()) {
+                        let card_id = card_ids.get(has_card.card_entity()).unwrap();
+                        let known_card = state.card_lookup.0.get(card_id).unwrap();
+                        score += known_card.penalty_score();
+                    }
+                }
+                final_score.insert(*player_id, score);
+            }
+
+            commands.run_system_cached_with(
+                host_eval_event,
+                ServerMessage::GameFinished {
+                    all_cards: state.card_lookup.0.clone(),
+                    final_scores: final_score,
+                },
+            );
         }
     }
 }

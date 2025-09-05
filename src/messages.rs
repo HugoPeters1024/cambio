@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use bevy::{platform::collections::HashMap, prelude::*};
 use serde::{Deserialize, Serialize};
 
@@ -120,6 +122,7 @@ pub enum ServerMessage {
     SlapTable {
         actor: PlayerId,
     },
+    GameWillFinishIn(Duration),
     GameFinished {
         all_cards: HashMap<CardId, KnownCard>,
         final_scores: HashMap<PlayerId, i32>,

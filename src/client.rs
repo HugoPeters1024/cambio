@@ -14,7 +14,13 @@ use crate::transport::Transport;
 struct PlayerTurnIcon;
 
 #[derive(Component)]
-struct PlayerHUDText;
+struct PlayerIdxText;
+
+#[derive(Component)]
+struct PlayerBuffText;
+
+#[derive(Component)]
+struct GameOverCountDown;
 
 #[derive(Component)]
 struct PlayerNameText;
@@ -53,7 +59,16 @@ impl Plugin for ClientPlugin {
             .run_if(in_state(GamePhase::Playing)),
         );
 
-        app.add_systems(Update, update_player_turn_state);
+        app.add_systems(
+            Update,
+            (
+                hud_update_player_idx,
+                hud_update_turn_buf,
+                hud_update_slap_button,
+                hud_game_finish_countdown,
+            )
+                .run_if(in_state(GamePhase::Playing)),
+        );
         app.add_systems(
             Update,
             (
@@ -65,10 +80,48 @@ impl Plugin for ClientPlugin {
 }
 
 fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: Res<GameAssets>) {
+    commands.spawn((
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        Pickable::IGNORE,
+        children![
+            (
+                Node {
+                    width: Val::Percent(50.0),
+                    flex_direction: FlexDirection::Column,
+                    ..default()
+                },
+                Pickable::IGNORE,
+                children![
+                    (
+                        PlayerIdxText,
+                        Text::new("You are player ..."),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextShadow::default()
+                    ),
+                    (PlayerBuffText, Text::new(""), TextShadow::default())
+                ],
+            ),
+            (
+                Node {
+                    width: Val::Percent(50.0),
+                    justify_content: JustifyContent::FlexEnd,
+                    ..default()
+                },
+                Pickable::IGNORE,
+                children![(GameOverCountDown, Text::new(""), TextShadow::default())],
+            )
+        ],
+    ));
+
     commands.add_observer(on_player_turn_added);
     commands.add_observer(on_player_turn_removed);
-
-    commands.spawn((Text::from("You are player: ..."), PlayerHUDText));
 
     let deck_of_cards = commands
         .spawn((
@@ -196,20 +249,38 @@ fn sync_cursors_from_state(
     }
 }
 
-fn update_player_turn_state(
+fn hud_update_slap_button(
     mut commands: Commands,
-    me: Single<&PlayerId, With<MyPlayer>>,
-    turn_state: Query<&TurnState, With<MyPlayer>>,
-    extra: Query<&MayGiveCardTo, With<MyPlayer>>,
     slap_table_button: Single<Entity, With<SlapTableButton>>,
     immunity: Query<&HasImmunity>,
-    mut hud_text: Single<&mut Text, With<PlayerHUDText>>,
+    turn_state: Query<&TurnState, (With<MyPlayer>, Without<HasImmunity>)>,
 ) {
-    // hidden by default
-    commands
-        .entity(*slap_table_button)
-        .insert(Visibility::Hidden);
+    // Revealed if it's at the start of your turn and nobody's done it yet
+    if let Some(TurnState::Start) = turn_state.iter().next()
+        && immunity.is_empty()
+    {
+        commands
+            .entity(*slap_table_button)
+            .insert(Visibility::Inherited);
+    } else {
+        commands
+            .entity(*slap_table_button)
+            .insert(Visibility::Hidden);
+    }
+}
 
+fn hud_update_player_idx(
+    me: Single<&PlayerId, With<MyPlayer>>,
+    mut hud_text: Single<&mut Text, With<PlayerIdxText>>,
+) {
+    hud_text.0 = format!("You are player: {}", me.player_number(),);
+}
+
+fn hud_update_turn_buf(
+    turn_state: Query<&TurnState, With<MyPlayer>>,
+    extra: Query<&MayGiveCardTo, With<MyPlayer>>,
+    mut buff_text: Single<&mut Text, With<PlayerBuffText>>,
+) {
     let mut turn_description = "".to_string();
     if let Some(player_at_turn) = turn_state.iter().next() {
         turn_description = match player_at_turn {
@@ -228,15 +299,9 @@ fn update_player_turn_state(
             },
         }
         .to_string();
-
-        // Revealed if it's at the start of your turn and nobody's done it yet
-        if *player_at_turn == TurnState::Start && immunity.is_empty() {
-            commands
-                .entity(*slap_table_button)
-                .insert(Visibility::Inherited);
-        }
     };
 
+    // This buff always takes precedence
     if let Some(may_give_card_to) = extra.iter().next() {
         turn_description = format!(
             "You may give a card to player {}!",
@@ -244,11 +309,20 @@ fn update_player_turn_state(
         );
     }
 
-    hud_text.0 = format!(
-        "You are player: {} ({})",
-        me.player_number(),
-        turn_description
-    );
+    buff_text.0 = turn_description;
+}
+
+fn hud_game_finish_countdown(
+    state: Single<&CambioState>,
+    mut finish_countdown_text: Single<&mut Text, With<GameOverCountDown>>,
+) {
+    finish_countdown_text.0 = "".to_string();
+    if let Some(timer) = state.game_will_finish_in.as_ref() {
+        if !timer.finished() {
+            finish_countdown_text.0 =
+                format!("Game will end in {} seconds", timer.remaining_secs().ceil());
+        }
+    }
 }
 
 fn set_and_publish_cursor_position(

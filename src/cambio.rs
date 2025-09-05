@@ -64,6 +64,12 @@ pub struct BelongsToSlot(pub Entity);
 #[relationship_target(relationship = BelongsToSlot)]
 pub struct HasCard(Entity);
 
+impl HasCard {
+    pub fn card_entity(&self) -> Entity {
+        self.0
+    }
+}
+
 #[derive(Component)]
 pub struct UnrevealKnownCardTimer(Timer);
 
@@ -126,6 +132,7 @@ pub struct CambioState {
     pub card_lookup: CardValueLookup,
     pub discard_pile_entity: Entity,
     pub game_finished: bool,
+    pub game_will_finish_in: Option<Timer>,
 }
 
 #[derive(Event)]
@@ -186,6 +193,7 @@ pub fn spawn_cambio_root(mut commands: Commands) {
                 card_lookup: CardValueLookup::default(),
                 discard_pile_entity: discard_pile,
                 game_finished: false,
+                game_will_finish_in: None,
             },
         ))
         .id();
@@ -1086,6 +1094,9 @@ pub fn process_single_event(
             *turn_state = TurnState::Finished;
             commands.entity(player_entity).insert(HasImmunity);
         }
+        ServerMessage::GameWillFinishIn(duration) => {
+            state.game_will_finish_in = Some(Timer::new(duration.clone(), TimerMode::Once));
+        }
         ServerMessage::GameFinished { all_cards, .. } => {
             for (card_id, known_card) in all_cards.iter() {
                 state.card_lookup.0.insert(*card_id, *known_card);
@@ -1141,6 +1152,7 @@ pub fn process_single_event(
             }
 
             state.game_finished = true;
+            state.game_will_finish_in = None;
         }
     }
 

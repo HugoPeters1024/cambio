@@ -1,4 +1,6 @@
-use bevy::{platform::collections::HashMap, prelude::*};
+use std::time::Duration;
+
+use bevy::prelude::*;
 use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
 use rand::seq::SliceRandom;
 use strum::IntoEnumIterator;
@@ -205,9 +207,6 @@ fn trigger_host_server_events(
     mut commands: Commands,
     states: Query<&CambioState>,
     player_at_turn: Query<(Entity, &TurnState)>,
-    players: Query<&PlayerState>,
-    card_ids: Query<&CardId>,
-    children: Query<&Children>,
     immunity: Query<&HasImmunity>,
 ) {
     let state = states.get(*root).unwrap();
@@ -223,7 +222,6 @@ fn trigger_host_server_events(
 
     for (current_player_at_turn, turn_state) in player_at_turn.iter() {
         if *turn_state == TurnState::Finished {
-            println!("Moving to next player");
             let mut all_players = state.player_index.iter().collect::<Vec<_>>();
             all_players.sort_by_key(|(p, _)| p.player_number());
 
@@ -236,36 +234,19 @@ fn trigger_host_server_events(
 
             let (next_player_id, next_player) = all_players[next_player_idx];
 
-            let event = if immunity.contains(*next_player) {
-                let mut final_score = HashMap::new();
-
-                for (player_id, player_entity) in state.player_index.iter() {
-                    let player_state = players.get(*player_entity).unwrap();
-                    let mut score: i32 = 0;
-                    for slot_id in player_state.slots.iter() {
-                        if let Some(card_id) = children
-                            .iter_descendants(*state.slot_index.get(slot_id).unwrap())
-                            .filter_map(|c| card_ids.get(c).ok())
-                            .next()
-                        {
-                            let known_card = state.card_lookup.0.get(card_id).unwrap();
-                            score += known_card.penalty_score();
-                        }
-                    }
-                    final_score.insert(*player_id, score);
-                }
-
-                ServerMessage::GameFinished {
-                    all_cards: state.card_lookup.0.clone(),
-                    final_scores: final_score,
-                }
+            if immunity.contains(*next_player) && state.game_will_finish_in.is_none() {
+                commands.run_system_cached_with(
+                    host_eval_event,
+                    ServerMessage::GameWillFinishIn(Duration::from_secs(5)),
+                );
             } else {
-                ServerMessage::PlayerAtTurn {
-                    player_id: *next_player_id,
-                }
+                commands.run_system_cached_with(
+                    host_eval_event,
+                    ServerMessage::PlayerAtTurn {
+                        player_id: *next_player_id,
+                    },
+                );
             };
-
-            commands.run_system_cached_with(host_eval_event, event);
         }
     }
 }
