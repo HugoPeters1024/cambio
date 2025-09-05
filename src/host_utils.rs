@@ -8,7 +8,6 @@ use crate::{
     cards::{KnownCard, Rank, Suit},
     messages::*,
     transport::Transport,
-    utils::Seq,
 };
 
 pub fn host_eval_event(
@@ -106,7 +105,6 @@ pub fn give_penalty_card(
     mut commands: Commands,
     state: Single<&CambioState>,
     players: Query<&PlayerState>,
-    slot_ids: Query<&SlotId>,
     transport: ResMut<Transport>,
     children: Query<&Children>,
     card_ids: Query<&CardId>,
@@ -122,21 +120,20 @@ pub fn give_penalty_card(
 
     let player = players.get(*player_entity).unwrap();
 
-    let free_slot = player.slots.iter().find(|slot_entity| {
+    let free_slot = player.slots.iter().find(|slot_id| {
         children
-            .iter_descendants(**slot_entity)
+            .iter_descendants(*state.slot_index.get(*slot_id).unwrap())
             .filter_map(|c| card_ids.get(c).ok())
             .next()
             .is_none()
     });
 
     if let Some(free_slot) = free_slot {
-        let free_slot_id = slot_ids.get(*free_slot).unwrap();
         commands.run_system_cached_with(
             host_eval_event,
             ServerMessage::ReceiveFreshCardFromDeck {
                 actor: player_id,
-                slot_id: *free_slot_id,
+                slot_id: *free_slot,
                 card_id: state.free_cards[0],
             },
         );
@@ -236,9 +233,9 @@ fn trigger_host_server_events(
                 for (player_id, player_entity) in state.player_index.iter() {
                     let player_state = players.get(*player_entity).unwrap();
                     let mut score: i32 = 0;
-                    for slot_entity in player_state.slots.iter() {
+                    for slot_id in player_state.slots.iter() {
                         if let Some(card_id) = children
-                            .iter_descendants(*slot_entity)
+                            .iter_descendants(*state.slot_index.get(slot_id).unwrap())
                             .filter_map(|c| card_ids.get(c).ok())
                             .next()
                         {

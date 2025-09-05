@@ -514,7 +514,7 @@ fn host_may_penalize_rejected_events(
     transport: ResMut<Transport>,
     mut rejected: EventReader<RejectedMessage>,
 ) {
-    let Transport::Host(host) = transport.into_inner() else {
+    let Transport::Host(_) = transport.into_inner() else {
         return;
     };
 

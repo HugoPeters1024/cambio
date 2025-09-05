@@ -97,7 +97,7 @@ pub struct DiscardPile;
 pub struct PlayerState {
     pub username: String,
     pub last_mouse_pos_world: Vec2,
-    pub slots: HashSet<Entity>,
+    pub slots: HashSet<SlotId>,
 }
 
 #[derive(Component, Clone)]
@@ -334,10 +334,9 @@ pub fn process_single_event(
 
     macro_rules! slot_owner {
         ($slot_id: expr) => {{
-            let slot_entity = slot_must_exists!($slot_id);
             players
                 .iter()
-                .find(|(_, player_state)| player_state.slots.contains(&slot_entity))
+                .find(|(_, player_state)| player_state.slots.contains($slot_id))
                 .unwrap()
                 .0
         }};
@@ -451,7 +450,7 @@ pub fn process_single_event(
                 ))
                 .id();
 
-            player.1.slots.insert(slot_entity);
+            player.1.slots.insert(*slot_id);
             state.slot_index.insert(*slot_id, slot_entity);
         }
         ServerMessage::ReceiveFreshCardFromDeck {
@@ -1074,8 +1073,9 @@ pub fn process_single_event(
             }
 
             for (_, player_state) in players.iter() {
-                for slot_entity in player_state.slots.iter() {
-                    children.iter_descendants(*slot_entity).for_each(|entity| {
+                for slot_id in player_state.slots.iter() {
+                    let slot_entity = slot_must_exists!(slot_id);
+                    children.iter_descendants(slot_entity).for_each(|entity| {
                         if let Ok(card_id) = card_ids.get(entity) {
                             if let Some(known_value) = state.card_lookup.0.get(card_id) {
                                 commands
