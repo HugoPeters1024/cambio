@@ -14,7 +14,6 @@ impl Plugin for MenuPlugin {
         app.add_plugins(MenuButtonPlugin);
         app.add_plugins(bevy_ui_text_input::TextInputPlugin);
         app.add_systems(OnEnter(GamePhase::Menu), setup_menu);
-        app.add_systems(OnExit(GamePhase::Menu), remove_menu);
     }
 }
 
@@ -49,6 +48,7 @@ fn setup_menu(mut commands: Commands) {
 
     let root = commands
         .spawn((
+            StateScoped(GamePhase::Menu),
             MenuRoot,
             Node {
                 width: Val::Percent(100.0),
@@ -223,12 +223,6 @@ fn setup_menu(mut commands: Commands) {
             JoinGameButton,
         ))
         .observe(on_join_game);
-}
-
-fn remove_menu(mut commands: Commands, query: Query<Entity, With<MenuRoot>>) {
-    for entity in query.iter() {
-        commands.entity(entity).despawn();
-    }
 }
 
 fn on_host_game(

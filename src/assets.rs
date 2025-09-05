@@ -53,6 +53,7 @@ pub struct GameAssets {
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Default, States)]
+#[states(scoped_entities)]
 pub enum GamePhase {
     #[default]
     AssetLoading,
@@ -66,10 +67,12 @@ pub struct GameAssetPlugin;
 
 impl Plugin for GameAssetPlugin {
     fn build(&self, app: &mut App) {
-        app.init_state::<GamePhase>().add_loading_state(
-            LoadingState::new(GamePhase::AssetLoading)
-                .continue_to_state(GamePhase::Menu)
-                .load_collection::<GameAssets>(),
-        );
+        app.init_state::<GamePhase>()
+            .enable_state_scoped_entities::<GamePhase>()
+            .add_loading_state(
+                LoadingState::new(GamePhase::AssetLoading)
+                    .continue_to_state(GamePhase::Menu)
+                    .load_collection::<GameAssets>(),
+            );
     }
 }
