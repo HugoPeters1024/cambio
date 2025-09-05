@@ -115,6 +115,12 @@ pub struct CambioState {
 #[derive(Event)]
 pub struct AcceptedMessage(pub ServerMessage);
 
+#[derive(Event)]
+pub struct RejectedMessage {
+    pub msg: ServerMessage,
+    pub foul_play: bool,
+}
+
 #[derive(Clone, Default)]
 pub struct CardValueLookup(pub HashMap<CardId, KnownCard>);
 
@@ -123,6 +129,7 @@ pub struct CambioPlugin;
 impl Plugin for CambioPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<AcceptedMessage>();
+        app.add_event::<RejectedMessage>();
         app.add_systems(Update, handle_unreveal_timer);
     }
 }
@@ -184,16 +191,30 @@ pub fn process_single_event(
     may_give_card_to: Query<&MayGiveCardTo>,
     immunity: Query<&HasImmunity>,
     mut accepted: EventWriter<AcceptedMessage>,
+    mut rejected: EventWriter<RejectedMessage>,
     mut player_at_turn: Query<(Entity, &mut TurnState)>,
     mut commands: Commands,
 ) -> Option<ServerMessage> {
     info!("Processing message: {:?}", msg);
 
-    macro_rules! reject {
-        ($($arg:tt)*) => {
+    macro_rules! reject_generic {
+        ($foul_play: expr, $($arg:tt)*) => {
+            rejected.write(RejectedMessage { msg: msg.clone(), foul_play: $foul_play });
             warn!($($arg)*);
             println!($($arg)*);
             return None;
+        };
+    }
+
+    macro_rules! reject {
+        ($($arg:tt)*) => {
+            reject_generic!(false, $($arg)*);
+        };
+    }
+
+    macro_rules! reject_foul {
+        ($($arg:tt)*) => {
+            reject_generic!(true, $($arg)*);
         };
     }
 
@@ -392,17 +413,33 @@ pub fn process_single_event(
             };
 
             let slot_idx = player.1.slots.len();
-            if slot_idx >= 4 {
+            if slot_idx >= 8 {
                 reject!(
                     "Player {} already has the maximum number of slots",
                     actor.player_number()
                 );
             }
 
-            let x = (DESIRED_CARD_WIDTH + 10.0) * (slot_idx % 2) as f32
-                - (DESIRED_CARD_WIDTH + 10.0) / 2.0;
-            let y = (DESIRED_CARD_HEIGHT + 10.0) * (slot_idx / 2) as f32
-                - (DESIRED_CARD_HEIGHT + 10.0) / 2.0;
+            // Tiling the slots like:
+            // 7 2 3 5
+            // 6 0 1 4
+            let (slot_x, slot_y): (i32, i32) = match slot_idx {
+                0 => (0, 0),
+                1 => (1, 0),
+                2 => (0, 1),
+                3 => (1, 1),
+                4 => (2, 0),
+                5 => (2, 1),
+                6 => (-1, 0),
+                7 => (-1, 1),
+                _ => unreachable!(),
+            };
+
+            const SLOT_WIDTH: f32 = DESIRED_CARD_WIDTH + 10.0;
+            const SLOT_HEIGHT: f32 = DESIRED_CARD_HEIGHT + 10.0;
+
+            let x = SLOT_WIDTH * slot_x as f32 - SLOT_WIDTH / 2.0;
+            let y = SLOT_HEIGHT * slot_y as f32 - SLOT_HEIGHT / 2.0;
 
             let slot_entity = commands
                 .spawn((
@@ -701,7 +738,7 @@ pub fn process_single_event(
                 };
 
                 if top_card.rank != known_value.rank {
-                    reject!("Cannot discard a card of a different rank!");
+                    reject_foul!("Cannot discard a card of a different rank!");
                 }
 
                 let stolen_from = slot_owner!(origin_slot_id);
@@ -1101,6 +1138,7 @@ mod tests {
         fn new() -> TestSetup {
             let mut world = World::new();
             EventRegistry::register_event::<AcceptedMessage>(&mut world);
+            EventRegistry::register_event::<RejectedMessage>(&mut world);
 
             world.run_system_cached(spawn_cambio_root).unwrap();
             let root = world

@@ -8,11 +8,12 @@ use rand::Rng;
 
 use crate::{
     assets::GamePhase,
-    cambio::{AcceptedMessage, CambioState, PlayerId, PlayerState, process_single_event},
-    host_utils::host_eval_event,
+    cambio::{
+        process_single_event, AcceptedMessage, CambioState, PlayerId, PlayerState, RejectedMessage
+    },
+    host_utils::{give_penalty_card, host_eval_event},
     messages::{
-        ClientClaim, ClientClaimUnreliable, RELIABLE_CHANNEL, ServerMessage,
-        ServerMessageUnreliable, UNRELIABLE_CHANNEL,
+        ClientClaim, ClientClaimUnreliable, ServerMessage, ServerMessageUnreliable, RELIABLE_CHANNEL, UNRELIABLE_CHANNEL
     },
     utils::Seq,
 };
@@ -33,6 +34,7 @@ pub struct HostTransport {
     pub username: String,
     pub socket_id: Option<PeerId>,
     pub player_seq: Seq<u8>,
+    pub slot_seq: Seq<u64>,
     pub socket: MatchboxSocket,
     pub incoming_claims: Vec<ClaimFrom>,
     pub incoming_claims_unreliable: Vec<ClaimFromUnreliable>,
@@ -71,6 +73,7 @@ impl Transport {
             socket_id: None,
             socket,
             player_seq: Seq::default(),
+            slot_seq: Seq::default(),
             incoming_claims: Vec::new(),
             incoming_claims_unreliable: Vec::new(),
             accepted_history: Vec::new(),
@@ -167,6 +170,7 @@ impl Plugin for TransportPlugin {
                 host_processes_reliable_claims,
                 host_processes_unreliable_claims,
                 host_persists_and_broadcasts_accepted_events,
+                host_may_penalize_rejected_events,
                 client_receives_reliable_results,
                 client_receives_unreliable_results,
             )
@@ -502,6 +506,27 @@ fn host_persists_and_broadcasts_accepted_events(
         }
 
         broadcast_and_store(msg.clone());
+    }
+}
+
+fn host_may_penalize_rejected_events(
+    mut commands: Commands,
+    transport: ResMut<Transport>,
+    mut rejected: EventReader<RejectedMessage>,
+) {
+    let Transport::Host(host) = transport.into_inner() else {
+        return;
+    };
+
+    for rejected in rejected.read() {
+        match rejected.msg {
+            ServerMessage::DropCardOnDiscardPile { actor, .. } => {
+                if rejected.foul_play {
+                    commands.run_system_cached_with(give_penalty_card, actor);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

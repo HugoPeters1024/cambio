@@ -48,7 +48,6 @@ pub fn host_eval_event(
 pub fn setup_new_player(
     In(player_id): In<PlayerId>,
     mut commands: Commands,
-    mut slot_seq: Local<Seq<u64>>,
     state: Single<&CambioState>,
     transport: ResMut<Transport>,
 ) {
@@ -84,7 +83,7 @@ pub fn setup_new_player(
     );
 
     for i in 0..4 {
-        let slot_id = SlotId(slot_seq.generate());
+        let slot_id = SlotId(host.slot_seq.generate());
 
         commands.run_system_cached_with(
             host_eval_event,
@@ -99,6 +98,70 @@ pub fn setup_new_player(
 
     if state.player_index.is_empty() {
         commands.run_system_cached_with(host_eval_event, ServerMessage::PlayerAtTurn { player_id });
+    }
+}
+
+pub fn give_penalty_card(
+    In(player_id): In<PlayerId>,
+    mut commands: Commands,
+    state: Single<&CambioState>,
+    players: Query<&PlayerState>,
+    slot_ids: Query<&SlotId>,
+    transport: ResMut<Transport>,
+    children: Query<&Children>,
+    card_ids: Query<&CardId>,
+) {
+    let Transport::Host(host) = transport.into_inner() else {
+        panic!("impossible");
+    };
+
+    let Some(player_entity) = state.player_index.get(&player_id) else {
+        warn!("Player not found: {:?}", player_id);
+        return;
+    };
+
+    let player = players.get(*player_entity).unwrap();
+
+    let free_slot = player.slots.iter().find(|slot_entity| {
+        children
+            .iter_descendants(**slot_entity)
+            .filter_map(|c| card_ids.get(c).ok())
+            .next()
+            .is_none()
+    });
+
+    if let Some(free_slot) = free_slot {
+        let free_slot_id = slot_ids.get(*free_slot).unwrap();
+        commands.run_system_cached_with(
+            host_eval_event,
+            ServerMessage::ReceiveFreshCardFromDeck {
+                actor: player_id,
+                slot_id: *free_slot_id,
+                card_id: state.free_cards[0],
+            },
+        );
+    } else {
+        if player.slots.len() >= 8 {
+            return;
+        }
+
+        let fresh_slot_id = host.slot_seq.generate();
+        commands.run_system_cached_with(
+            host_eval_event,
+            ServerMessage::ReceiveFreshSlot {
+                actor: player_id,
+                slot_id: SlotId(fresh_slot_id),
+            },
+        );
+
+        commands.run_system_cached_with(
+            host_eval_event,
+            ServerMessage::ReceiveFreshCardFromDeck {
+                actor: player_id,
+                slot_id: SlotId(fresh_slot_id),
+                card_id: state.free_cards[0],
+            },
+        );
     }
 }
 

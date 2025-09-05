@@ -4,6 +4,7 @@ use tracing::info;
 use axum::{http::StatusCode, response::IntoResponse, routing::get};
 use matchbox_signaling::SignalingServerBuilder;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use clap::Parser;
 
 use crate::{
     state::{RoomId, ServerState},
@@ -28,11 +29,23 @@ fn setup_logging() {
         .init();
 }
 
+/// Simple program to greet a person
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    #[arg(long, default_value_t = 3536)]
+    port: u16,
+}
+
 #[tokio::main]
 async fn main() {
     setup_logging();
+    let args = Args::parse();
+
+    info!("Starting signaling server on port {}", args.port);
+
     let mut state = ServerState::default();
-    let host = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 3536);
+    let host = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), args.port);
     let server = SignalingServerBuilder::new(host, RoomedClientServerTopology, state.clone())
         .on_connection_request({
             let mut state = state.clone();
@@ -54,7 +67,6 @@ async fn main() {
         .mutate_router(|router| router.route("/health", get(health_handler)))
         .build();
 
-    info!("Starting signaling server");
     server
         .serve()
         .await
