@@ -173,7 +173,6 @@ fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: 
 
 fn on_may_look_added(
     trigger: Trigger<OnAdd, MayLookAt>,
-    may_look_at: Query<&MayLookAt>,
     assets: Res<GameAssets>,
     mut commands: Commands,
 ) {

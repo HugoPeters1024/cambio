@@ -218,7 +218,6 @@ pub fn process_single_event(
     (belongs_to_slot, has_card): (Query<&BelongsToSlot>, Query<&SlotHasCard>),
     (card_ids, slot_ids): (Query<&CardId>, Query<&SlotId>),
     known_cards: Query<&KnownCard>,
-    children: Query<&Children>,
     matching_discard: Query<&WasMatchingDiscard>,
     (may_give_card_to, may_look_at): (Query<&MayGiveCardTo>, Query<&MayLookAt>),
     immunity: Query<&HasImmunity>,
@@ -582,6 +581,7 @@ pub fn process_single_event(
                 .insert(IsHeldBy(player_entity))
                 .insert(BelongsToSlot(slot_entity))
                 .insert(Transform::from_xyz(0.0, 0.0, 10.0))
+                .remove::<Pickable>()
                 .remove::<ChildOf>()
                 .remove::<Pickable>();
         }
@@ -595,13 +595,6 @@ pub fn process_single_event(
             let card_entity = card_must_exists!(card_id);
             player_must_be_holding_card!(actor, card_id);
 
-            if children
-                .iter_descendants(slot_entity)
-                .any(|c| card_ids.contains(c))
-            {
-                reject!("Slot already has a card.");
-            }
-
             if let Ok(BelongsToSlot(originating_slot_entity)) = belongs_to_slot.get(card_entity)
                 && let Ok(MayGiveCardTo(player_to_screw)) = may_give_card_to.get(player_entity)
             {
@@ -613,7 +606,10 @@ pub fn process_single_event(
                 if originating_slot != slot_id {
                     // But if it is somewhere else then...
 
-                    // 1. It must be on a slot of the player we are screwing
+                    // 1. It must be empty
+                    slot_must_not_have_card!(slot_id);
+
+                    // 2. It must be on a slot of the player we are screwing
                     if slot_owner != player_to_screw {
                         reject!(
                             "You can only give a card to player {} right now.",
@@ -1196,16 +1192,16 @@ pub fn process_single_event(
             for (_, player_state) in players.iter() {
                 for slot_id in player_state.slots.iter() {
                     let slot_entity = slot_must_exists!(slot_id);
-                    children.iter_descendants(slot_entity).for_each(|entity| {
-                        if let Ok(card_id) = card_ids.get(entity) {
+                    if let Ok(SlotHasCard(card_entity)) = has_card.get(slot_entity) {
+                        if let Ok(card_id) = card_ids.get(*card_entity) {
                             if let Some(known_value) = state.card_lookup.0.get(card_id) {
                                 commands
-                                    .entity(entity)
+                                    .entity(*card_entity)
                                     .remove::<UnrevealKnownCardTimer>()
                                     .insert(*known_value);
                             }
                         }
-                    });
+                    }
                 }
             }
 
