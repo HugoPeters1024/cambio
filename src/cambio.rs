@@ -683,6 +683,7 @@ pub fn process_single_event(
                 .remove::<KnownCard>()
                 .insert(ChildOf(slot_entity))
                 .insert(Pickable::default())
+                .insert(BelongsToSlot(slot_entity))
                 .insert(Transform::from_xyz(0.0, 0.0, 1.0));
         }
         ServerMessage::RevealCardAtSlot {
