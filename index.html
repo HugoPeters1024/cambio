@@ -1,14 +1,12 @@
-<!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta charset="utf-8"/>
+<!DOCTYPE html><html lang="en"><head>
+        <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
         <title>Cambio Online</title>
         
         
         
         <link rel="icon" href="icon.ico">
-        <style>body, html {
+        <style type="text/css">body, html {
     height: 100%;
 }
 
@@ -63,7 +61,9 @@ body {
 }
 </style>
 
-    <link rel="modulepreload" href="./cambio-4067c45888e72f.js" crossorigin="anonymous" integrity="sha384-Wc14CKHQUkRCj8wwspNrk42lcOtE5sUEulnBr85BP4pktAeEBW0jb96t+zGhbNiJ"><link rel="preload" href="./cambio-4067c45888e72f_bg.wasm" crossorigin="anonymous" integrity="sha384-YsOGqud5uFEzSeBgy1HCqIWfZMaQ3NIwbyQ+Yi6L/1XYUtX+jd4NEmJ21hZ48j5E" as="fetch" type="application/wasm"></head>
+    
+<link rel="preload" href="./cambio-8dc61e0ac23f061e_bg.wasm" as="fetch" type="application/wasm" crossorigin="">
+<link rel="modulepreload" href="./cambio-8dc61e0ac23f061e.js"></head>
     <body>
         <script>// Insert hack to make sound autoplay on Chrome as soon as the user interacts with the tab:
 // https://developers.google.com/web/updates/2018/11/web-audio-autoplay#moving-forward
@@ -135,20 +135,10 @@ body {
             </canvas>
         </div>
     
-<script type="module">
-import init, * as bindings from './cambio-4067c45888e72f.js';
-const wasm = await init({ module_or_path: './cambio-4067c45888e72f_bg.wasm' });
-
-
-window.wasmBindings = bindings;
-
-
-dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
-
-</script></body>
-    <!-- Disable right click on canvas, that way the game can capture the right click -->
+    
     <script>
       let canvas = document.getElementById('bevy');
       canvas.addEventListener('contextmenu', function(e) { e.preventDefault(); });
     </script>
-</html>
+
+<script type="module">import init from './cambio-8dc61e0ac23f061e.js';init('./cambio-8dc61e0ac23f061e_bg.wasm');</script></body><!-- Disable right click on canvas, that way the game can capture the right click --></html>
