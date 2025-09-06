@@ -562,10 +562,11 @@ pub fn process_single_event(
         } => {
             let player_entity = player_must_exists!(actor);
             let card_entity = card_must_exists!(card_id);
-            let slot_entity = slot_must_exists!(slot_id);
+            let _slot_entity = slot_must_exists!(slot_id);
             slot_must_have_card!(slot_id, card_id);
             player_must_not_be_holding_a_card!(actor);
             card_must_not_be_held!(card_id);
+            slot_must_have_card!(slot_id, card_id);
 
             let slot_owner = slot_owner!(slot_id);
             if slot_owner != actor {
@@ -579,9 +580,7 @@ pub fn process_single_event(
             commands
                 .entity(card_entity)
                 .insert(IsHeldBy(player_entity))
-                .insert(BelongsToSlot(slot_entity))
                 .insert(Transform::from_xyz(0.0, 0.0, 10.0))
-                .remove::<Pickable>()
                 .remove::<ChildOf>()
                 .remove::<Pickable>();
         }
@@ -950,6 +949,7 @@ pub fn process_single_event(
                 .entity(card_entity)
                 .insert(IsHeldBy(player_entity))
                 .insert(Transform::from_xyz(0.0, 0.0, 10.0))
+                .remove::<Pickable>()
                 .remove::<ChildOf>();
         }
         ServerMessage::SwapHeldCardWithSlotCard {
