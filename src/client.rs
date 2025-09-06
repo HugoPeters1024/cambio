@@ -579,6 +579,15 @@ fn effects_for_accepted_messages(
                     *catched_up = true;
                 }
             }
+            ServerMessage::PlayerAtTurn { player_id, .. } => {
+                let me_id = player_ids.get(*me).unwrap().1;
+                if player_id == me_id && *catched_up {
+                    commands.spawn((
+                        AudioPlayer::new(assets.your_turn_sound.clone()),
+                        PlaybackSettings::DESPAWN,
+                    ));
+                }
+            }
             ServerMessage::ReceiveFreshCardFromDeck {
                 context, card_id, ..
             } => {

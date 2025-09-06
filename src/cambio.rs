@@ -517,7 +517,6 @@ pub fn process_single_event(
                 .id();
 
             if *context == ReceivedCardContext::MayLookAt {
-                warn!("Card {} may be looked at!", card_id.0);
                 commands.entity(card_entity).insert(MayLookAt(*actor));
             }
 

@@ -56,6 +56,9 @@ pub struct GameAssets {
 
     #[asset(path = "wrong.ogg")]
     pub wrong_sound: Handle<AudioSource>,
+
+    #[asset(path = "your_turn.ogg")]
+    pub your_turn_sound: Handle<AudioSource>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Default, States)]
