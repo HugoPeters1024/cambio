@@ -31,6 +31,9 @@ struct SlapTableButton;
 #[derive(Component)]
 struct CursorIconFor(PlayerId);
 
+#[derive(Component)]
+struct MayLookAtIcon;
+
 pub struct ClientPlugin;
 
 impl Plugin for ClientPlugin {
@@ -40,6 +43,8 @@ impl Plugin for ClientPlugin {
         app.add_observer(click_slot_card);
         app.add_observer(click_slot);
         app.add_observer(click_discard_pile);
+        app.add_observer(on_may_look_added);
+        app.add_observer(on_may_look_removed);
 
         app.add_systems(
             OnEnter(GamePhase::Playing),
@@ -164,6 +169,52 @@ fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: 
                 client.queue_claim(ClientClaim::SlapTable);
             },
         );
+}
+
+fn on_may_look_added(
+    trigger: Trigger<OnAdd, MayLookAt>,
+    may_look_at: Query<&MayLookAt>,
+    me: Query<&PlayerId, With<MyPlayer>>,
+    assets: Res<GameAssets>,
+    mut commands: Commands,
+) {
+    warn!("Adding may look icon");
+    let Ok(may_look_at) = may_look_at.get(trigger.target()) else {
+        return;
+    };
+
+    let Some(me) = me.iter().next() else {
+        return;
+    };
+
+    if may_look_at.0 != *me {
+        return;
+    }
+    commands.spawn((
+        Sprite {
+            custom_size: Some(Vec2::splat(64.0)),
+            ..Sprite::from_image(assets.reveal_sprite.clone())
+        },
+        ChildOf(trigger.target()),
+        Transform::from_xyz(0.0, 0.0, 10.0),
+        GrowOnHover,
+        MayLookAtIcon,
+    ));
+}
+
+fn on_may_look_removed(
+    trigger: Trigger<OnRemove, MayLookAt>,
+    icons: Query<Entity, With<MayLookAtIcon>>,
+    children: Query<&Children>,
+    mut commands: Commands,
+) {
+    children
+        .iter_descendants(trigger.target())
+        .for_each(|child| {
+            if let Ok(icon) = icons.get(child) {
+                commands.entity(icon).despawn();
+            }
+        })
 }
 
 fn on_player_spawn(
@@ -543,9 +594,7 @@ fn effects_for_accepted_messages(
                 }
             }
             ServerMessage::ReceiveFreshCardFromDeck {
-                is_penalty,
-                card_id,
-                ..
+                context, card_id, ..
             } => {
                 if *catched_up {
                     if let Some(card_entity) = state.card_index.get(card_id) {
@@ -561,12 +610,16 @@ fn effects_for_accepted_messages(
                             )));
                     }
 
-                    if *is_penalty {
-                        commands.spawn((
-                            AudioPlayer::new(assets.wrong_sound.clone()),
-                            PlaybackSettings::DESPAWN,
-                        ));
-                    }
+                    match context {
+                        ReceivedCardContext::Normal => {}
+                        ReceivedCardContext::MayLookAt => {}
+                        ReceivedCardContext::Penalty => {
+                            commands.spawn((
+                                AudioPlayer::new(assets.wrong_sound.clone()),
+                                PlaybackSettings::DESPAWN,
+                            ));
+                        }
+                    };
                 }
             }
             ServerMessage::TakeFreshCardFromDeck { .. } => {

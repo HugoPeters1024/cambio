@@ -6,13 +6,13 @@ use std::{
 use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_matchbox::prelude::PeerId;
 use bevy_tweening::{Animator, Tween, lens::TransformPositionLens};
-use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
+use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     assets::{DESIRED_CARD_HEIGHT, DESIRED_CARD_WIDTH},
     cards::*,
-    messages::ServerMessage,
+    messages::{ReceivedCardContext, ServerMessage},
 };
 
 #[derive(
@@ -83,6 +83,9 @@ pub struct MyPlayer;
 
 #[derive(Component)]
 pub struct HasImmunity;
+
+#[derive(Component)]
+pub struct MayLookAt(pub PlayerId);
 
 /// Special out of turn buff for a player
 /// indicating that they may dump a card
@@ -217,7 +220,7 @@ pub fn process_single_event(
     known_cards: Query<&KnownCard>,
     children: Query<&Children>,
     matching_discard: Query<&WasMatchingDiscard>,
-    may_give_card_to: Query<&MayGiveCardTo>,
+    (may_give_card_to, may_look_at): (Query<&MayGiveCardTo>, Query<&MayLookAt>),
     immunity: Query<&HasImmunity>,
     mut accepted: EventWriter<AcceptedMessage>,
     mut player_at_turn: Query<(Entity, &mut TurnState)>,
@@ -428,16 +431,16 @@ pub fn process_single_event(
 
             state.player_index.insert(*player_id, player_entity);
         }
+        ServerMessage::PlayerDisconnected { player_id } => {
+            let _ = player_must_exists!(player_id);
+            state.player_index.remove(player_id);
+        }
         ServerMessage::SetUsername { actor, username } => {
             let player_entity = player_must_exists!(actor);
             let Ok(mut player) = players.get_mut(player_entity) else {
                 reject!("Player index corrupted");
             };
             player.1.username = username.clone();
-        }
-        ServerMessage::PlayerDisconnected { player_id } => {
-            let _ = player_must_exists!(player_id);
-            state.player_index.remove(player_id);
         }
         ServerMessage::ReceiveFreshSlot { actor, slot_id } => {
             let player_entity = player_must_exists!(actor);
@@ -495,7 +498,7 @@ pub fn process_single_event(
             actor,
             card_id,
             slot_id,
-            ..
+            context,
         } => {
             let _ = player_must_exists!(actor);
             let slot_entity = slot_must_exists!(slot_id);
@@ -513,6 +516,11 @@ pub fn process_single_event(
                     Pickable::default(),
                 ))
                 .id();
+
+            if *context == ReceivedCardContext::MayLookAt {
+                warn!("Card {} may be looked at!", card_id.0);
+                commands.entity(card_entity).insert(MayLookAt(*actor));
+            }
 
             state.card_index.insert(*card_id, card_entity);
         }
@@ -695,7 +703,12 @@ pub fn process_single_event(
             slot_owner_must_not_be_immune!(slot_id);
             let slot_owner = slot_owner!(slot_id);
 
-            if *check_turn {
+            if let Ok(may_look_at) = may_look_at.get(card_entity)
+                && may_look_at.0 == *actor
+            {
+                // All good! These are the initial reveals at the start of the game
+                commands.entity(card_entity).remove::<MayLookAt>();
+            } else if *check_turn {
                 let mut turn_state = must_have_turn!(actor);
 
                 match &*turn_state {
@@ -1082,7 +1095,10 @@ pub fn process_single_event(
                 state.card_lookup.0.insert(*card_id, *value);
             }
         }
-        ServerMessage::ShuffleDiscardPile { card_ids, shuffle_seed } => {
+        ServerMessage::ShuffleDiscardPile {
+            card_ids,
+            shuffle_seed,
+        } => {
             if card_ids.is_empty() {
                 reject!("Cannot shuffle an empty discard pile");
             }
@@ -1218,6 +1234,8 @@ mod tests {
     use bevy::{asset::uuid::Uuid, ecs::event::EventRegistry};
     use strum::IntoEnumIterator;
 
+    use crate::messages::ReceivedCardContext;
+
     use super::*;
 
     const fn player0() -> PlayerId {
@@ -1346,7 +1364,7 @@ mod tests {
                     actor: player0(),
                     slot_id: SlotId(0),
                     card_id: CardId(0),
-                    is_penalty: false,
+                    context: ReceivedCardContext::Normal,
                 },
                 ServerMessage::PlayerAtTurn {
                     player_id: player0(),
@@ -1367,7 +1385,7 @@ mod tests {
                     actor: player0(),
                     slot_id: SlotId(0),
                     card_id: CardId(0),
-                    is_penalty: false,
+                    context: ReceivedCardContext::Normal,
                 },
                 ServerMessage::ReceiveFreshSlot {
                     actor: player0(),
@@ -1377,7 +1395,7 @@ mod tests {
                     actor: player0(),
                     slot_id: SlotId(1),
                     card_id: CardId(1),
-                    is_penalty: false,
+                    context: ReceivedCardContext::Normal,
                 },
                 ServerMessage::PlayerAtTurn {
                     player_id: player0(),
@@ -1398,7 +1416,7 @@ mod tests {
                     actor: player1(),
                     slot_id: SlotId(1),
                     card_id: CardId(1),
-                    is_penalty: false,
+                    context: ReceivedCardContext::Normal,
                 },
             ])
         }

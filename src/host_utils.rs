@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
-use rand::{seq::SliceRandom, RngCore};
+use rand::{RngCore, seq::SliceRandom};
 use strum::IntoEnumIterator;
 
 use crate::{
@@ -138,7 +138,18 @@ pub fn setup_new_player(
             },
         );
 
-        commands.run_system_cached_with(give_card_to_player, (player_id, slot_id, i < 2));
+        commands.run_system_cached_with(
+            give_card_to_player,
+            (
+                player_id,
+                slot_id,
+                if i < 2 {
+                    ReceivedCardContext::MayLookAt
+                } else {
+                    ReceivedCardContext::Normal
+                },
+            ),
+        );
     }
 
     if state.player_index.is_empty() {
@@ -190,7 +201,7 @@ pub fn give_penalty_card(
                 actor: player_id,
                 slot_id: *free_slot,
                 card_id: state.free_cards[0],
-                is_penalty: true,
+                context: ReceivedCardContext::Penalty,
             },
         );
     } else {
@@ -213,14 +224,14 @@ pub fn give_penalty_card(
                 actor: player_id,
                 slot_id: SlotId(fresh_slot_id),
                 card_id: state.free_cards[0],
-                is_penalty: true,
+                context: ReceivedCardContext::Penalty,
             },
         );
     }
 }
 
 pub fn give_card_to_player(
-    In((player_id, slot_id, reveal)): In<(PlayerId, SlotId, bool)>,
+    In((player_id, slot_id, context)): In<(PlayerId, SlotId, ReceivedCardContext)>,
     mut commands: Commands,
     state: Single<&CambioState>,
 ) {
@@ -231,11 +242,11 @@ pub fn give_card_to_player(
             actor: player_id,
             slot_id,
             card_id: front_card,
-            is_penalty: false,
+            context: context.clone(),
         },
     );
 
-    if reveal {
+    if context == ReceivedCardContext::Penalty {
         commands.run_system_cached_with(
             host_eval_event,
             ServerMessage::RevealCardAtSlot {
@@ -255,7 +266,7 @@ fn trigger_host_server_events(
     states: Query<&CambioState>,
     player_at_turn: Query<(Entity, &TurnState)>,
     immunity: Query<&HasImmunity>,
-    mut entropy: GlobalEntropy<WyRand>
+    mut entropy: GlobalEntropy<WyRand>,
 ) {
     let state = states.get(*root).unwrap();
     if state.free_cards.is_empty() {

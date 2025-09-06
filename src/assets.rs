@@ -33,6 +33,9 @@ pub struct GameAssets {
     #[asset(path = "locked.png")]
     pub locked_sprite: Handle<Image>,
 
+    #[asset(path = "reveal.png")]
+    pub reveal_sprite: Handle<Image>,
+
     #[asset(path = "card_sweep.ogg")]
     pub card_sweep: Handle<AudioSource>,
 

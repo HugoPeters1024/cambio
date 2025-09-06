@@ -4,7 +4,7 @@ use bevy_matchbox::{
     prelude::{PeerId, PeerState, WebRtcSocketBuilder},
 };
 use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
-use rand::{Rng, seq::SliceRandom};
+use rand::Rng;
 
 use crate::{
     assets::GamePhase,
@@ -12,7 +12,6 @@ use crate::{
         AcceptedMessage, CambioState, CardId, PlayerId, PlayerState, RejectionReason, SlotHasCard,
         process_single_event, spawn_cambio_root,
     },
-    cards::KnownCard,
     host_utils::host_eval_event,
     messages::{
         ClientClaim, ClientClaimUnreliable, RELIABLE_CHANNEL, ServerMessage,
@@ -437,6 +436,7 @@ fn host_processes_reliable_claims(
                 actor: *claimer_id,
                 username,
             },
+            ClientClaim::LookAtOwnCards => todo!(),
         };
 
         commands.run_system_cached_with(host_eval_event, server_message);

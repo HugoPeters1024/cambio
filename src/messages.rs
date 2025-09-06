@@ -11,6 +11,14 @@ use crate::{
 pub const RELIABLE_CHANNEL: usize = 0;
 pub const UNRELIABLE_CHANNEL: usize = 1;
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub enum ReceivedCardContext {
+    Normal,
+    Penalty,
+    // The first 2 cards in the game
+    MayLookAt,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ClientClaim {
     SetUserName {
@@ -41,6 +49,7 @@ pub enum ClientClaim {
         held_card_id: CardId,
     },
     SlapTable,
+    LookAtOwnCards,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -62,7 +71,7 @@ pub enum ServerMessage {
         actor: PlayerId,
         slot_id: SlotId,
         card_id: CardId,
-        is_penalty: bool,
+        context: ReceivedCardContext,
     },
     RevealCardAtSlot {
         actor: PlayerId,
