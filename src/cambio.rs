@@ -1372,6 +1372,35 @@ mod tests {
             ])
         }
 
+        fn one_player_with_slot_cards(cards: Vec<(CardId, KnownCard)>) -> Self {
+            let mut env = TestSetup::new().with_events(&[ServerMessage::PlayerConnected {
+                player_id: player0(),
+            }]);
+
+            for (i, (card_id, card)) in cards.iter().enumerate() {
+                env.accepts(&ServerMessage::PublishCardPublically {
+                    card_id: *card_id,
+                    value: card.clone(),
+                });
+                env.accepts(&ServerMessage::ReceiveFreshSlot {
+                    actor: player0(),
+                    slot_id: SlotId(i as u64),
+                });
+                env.accepts(&ServerMessage::ReceiveFreshCardFromDeck {
+                    actor: player0(),
+                    slot_id: SlotId(i as u64),
+                    card_id: *card_id,
+                    context: ReceivedCardContext::Normal,
+                });
+            }
+
+            env.accepts(&ServerMessage::PlayerAtTurn {
+                player_id: player0(),
+            });
+
+            env
+        }
+
         fn one_player_two_cards_start_of_turn() -> TestSetup {
             TestSetup::new().with_events(&[
                 ServerMessage::PlayerConnected {
@@ -1694,5 +1723,97 @@ mod tests {
                     slot_id: SlotId(0),
                 },
             ]);
+    }
+
+    #[test]
+    fn pickup_card_after_discard() {
+        let mut env = TestSetup::one_player_with_slot_cards(vec![
+            (
+                CardId(0),
+                KnownCard {
+                    rank: Rank::Three,
+                    suit: Suit::Hearts,
+                },
+            ),
+            (
+                CardId(1),
+                KnownCard {
+                    rank: Rank::Four,
+                    suit: Suit::Spades,
+                },
+            ),
+        ])
+        .with_card_on_discard_pile(
+            CardId(50),
+            KnownCard {
+                suit: Suit::Diamonds,
+                rank: Rank::Three,
+            },
+        );
+
+        // We discard our 3
+        env.accepts(&ServerMessage::PickUpSlotCard {
+            actor: player0(),
+            slot_id: SlotId(0),
+            card_id: CardId(0),
+        });
+        env.accepts(&ServerMessage::DropCardOnDiscardPile {
+            actor: player0(),
+            card_id: CardId(0),
+            offset_x: 0.0,
+            offset_y: 0.0,
+            rotation: 0.0,
+        });
+
+        // We then pick up the 3 as part of our turn
+        env.accepts(&ServerMessage::TakeCardFromDiscardPile {
+            actor: player0(),
+            card_id: CardId(0),
+        });
+
+        // and try to undo this action
+        env.accepts(&ServerMessage::DropCardOnDiscardPile {
+            actor: player0(),
+            card_id: CardId(0),
+            offset_x: 0.0,
+            offset_y: 0.0,
+            rotation: 0.0,
+        });
+
+        // pick it up again anyway
+        env.accepts(&ServerMessage::TakeCardFromDiscardPile {
+            actor: player0(),
+            card_id: CardId(0),
+        });
+
+        // swap
+        env.accepts(&ServerMessage::SwapHeldCardWithSlotCard {
+            actor: player0(),
+            held_card_id: CardId(0),
+            slot_card_id: CardId(1),
+            slot_id: SlotId(1),
+        });
+
+        // discard
+        env.accepts(&ServerMessage::DropCardOnDiscardPile {
+            actor: player0(),
+            card_id: CardId(1),
+            offset_x: 0.0,
+            offset_y: 0.0,
+            rotation: 0.0,
+        });
+
+        let mut world = env.get_world();
+
+        let state = world
+            .query::<&mut CambioState>()
+            .single_mut(&mut world)
+            .unwrap()
+            .clone();
+        let turn_state = world
+            .get::<TurnState>(state.player_index[&player0()])
+            .unwrap();
+
+        assert_eq!(*turn_state, TurnState::Finished);
     }
 }

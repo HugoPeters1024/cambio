@@ -174,22 +174,9 @@ fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: 
 fn on_may_look_added(
     trigger: Trigger<OnAdd, MayLookAt>,
     may_look_at: Query<&MayLookAt>,
-    me: Query<&PlayerId, With<MyPlayer>>,
     assets: Res<GameAssets>,
     mut commands: Commands,
 ) {
-    warn!("Adding may look icon");
-    let Ok(may_look_at) = may_look_at.get(trigger.target()) else {
-        return;
-    };
-
-    let Some(me) = me.iter().next() else {
-        return;
-    };
-
-    if may_look_at.0 != *me {
-        return;
-    }
     commands.spawn((
         Sprite {
             custom_size: Some(Vec2::splat(64.0)),
