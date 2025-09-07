@@ -212,7 +212,7 @@ pub fn process_single_event(
     In((root, msg)): In<(Entity, ServerMessage)>,
     mut states: Query<&mut CambioState>,
     mut players: Query<(&PlayerId, &mut PlayerState)>,
-    global_transforms: Query<&GlobalTransform>,
+    (mut transforms, global_transforms): (Query<&mut Transform>, Query<&GlobalTransform>),
     (held_by, is_holding): (Query<(Entity, &IsHeldBy)>, Query<&IsHoldingCard>),
     my_player: Query<Entity, With<MyPlayer>>,
     (belongs_to_slot, has_card): (Query<&BelongsToSlot>, Query<&SlotHasCard>),
@@ -1124,6 +1124,14 @@ pub fn process_single_event(
             state
                 .discard_pile
                 .retain(|card_entity| cards_in_discard_pile.contains(card_entity));
+
+            // Reset the z position of the cards left in the discard pile
+            for (i, card_id) in state.discard_pile.iter().enumerate() {
+                let card_entity = card_must_exists!(card_id);
+                if let Ok(mut transform) = transforms.get_mut(card_entity) {
+                    transform.translation.z = 0.0 + 0.1 * i as f32;
+                }
+            }
 
             // These cards were returned to the deck, now we are free to
             // shuffle the card_id -> known_value assignment here on the host!
