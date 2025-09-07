@@ -275,9 +275,7 @@ fn both_sync_peers(
                             .unwrap();
                         commands.run_system_cached_with(
                             host_eval_event,
-                            ServerMessage::PlayerDisconnected {
-                                player_id: *player_id,
-                            },
+                            ServerMessage::PlayerDisconnected(*player_id),
                         );
                     }
                 }
@@ -386,26 +384,21 @@ fn host_processes_reliable_claims(
             .unwrap();
 
         let server_message = match claim {
-            ClientClaim::PickUpSlotCard { slot_id, card_id } => ServerMessage::PickUpSlotCard {
-                actor: *claimer_id,
-                slot_id,
-                card_id,
-            },
-            ClientClaim::DropCardOnSlot { card_id, slot_id } => ServerMessage::DropCardOnSlot {
-                actor: *claimer_id,
-                card_id,
-                slot_id,
-            },
+            ClientClaim::PickUpSlotCard { slot_id, card_id } => {
+                ServerMessage::PickUpSlotCard(*claimer_id, slot_id, card_id)
+            }
+            ClientClaim::DropCardOnSlot { card_id, slot_id } => {
+                ServerMessage::DropCardOnSlot(*claimer_id, card_id, slot_id)
+            }
             ClientClaim::LookAtCardAtSlot { card_id, slot_id } => ServerMessage::RevealCardAtSlot {
                 actor: *claimer_id,
                 card_id,
                 slot_id,
                 check_turn: true,
             },
-            ClientClaim::TakeFreshCardFromDeck => ServerMessage::TakeFreshCardFromDeck {
-                actor: *claimer_id,
-                card_id: state.free_cards[0],
-            },
+            ClientClaim::TakeFreshCardFromDeck => {
+                ServerMessage::TakeFreshCardFromDeck(*claimer_id, state.free_cards[0])
+            }
             ClientClaim::DropCardOnDiscardPile { card_id } => {
                 ServerMessage::DropCardOnDiscardPile {
                     actor: *claimer_id,
@@ -416,10 +409,7 @@ fn host_processes_reliable_claims(
                 }
             }
             ClientClaim::TakeCardFromDiscardPile { card_id } => {
-                ServerMessage::TakeCardFromDiscardPile {
-                    actor: *claimer_id,
-                    card_id,
-                }
+                ServerMessage::TakeCardFromDiscardPile(*claimer_id, card_id)
             }
             ClientClaim::SwapHeldCardWithSlotCard {
                 slot_id,
@@ -431,11 +421,10 @@ fn host_processes_reliable_claims(
                 slot_card_id,
                 held_card_id,
             },
-            ClientClaim::SlapTable => ServerMessage::SlapTable { actor: *claimer_id },
-            ClientClaim::SetUserName { username } => ServerMessage::SetUsername {
-                actor: *claimer_id,
-                username,
-            },
+            ClientClaim::SlapTable => ServerMessage::SlapTable(*claimer_id),
+            ClientClaim::SetUserName { username } => {
+                ServerMessage::SetUsername(*claimer_id, username)
+            }
             ClientClaim::LookAtOwnCards => todo!(),
         };
 
@@ -540,19 +529,19 @@ fn host_persists_and_broadcasts_accepted_events(
         // need to process these events ourselves. It is however important that they are
         // persisted so that players that join later can see the discard pile for example.
         match msg {
-            ServerMessage::TakeFreshCardFromDeck { actor, card_id }
+            ServerMessage::TakeFreshCardFromDeck(actor, card_id)
             | ServerMessage::RevealCardAtSlot { actor, card_id, .. } => {
-                broadcast_and_store!(ServerMessage::PublishCardForPlayer {
-                    player_id: *actor,
-                    card_id: *card_id,
-                    value: Some(state.card_lookup.0.get(&*card_id).unwrap().clone()),
-                });
+                broadcast_and_store!(ServerMessage::PublishCardForPlayer(
+                    *actor,
+                    *card_id,
+                    Some(state.card_lookup.0.get(&*card_id).unwrap().clone())
+                ));
             }
             ServerMessage::DropCardOnDiscardPile { card_id, .. } => {
-                broadcast_and_store!(ServerMessage::PublishCardPublically {
-                    card_id: *card_id,
-                    value: state.card_lookup.0.get(&*card_id).unwrap().clone(),
-                });
+                broadcast_and_store!(ServerMessage::PublishCardPublically(
+                    *card_id,
+                    state.card_lookup.0.get(&*card_id).unwrap().clone()
+                ));
             }
             _ => (),
         }

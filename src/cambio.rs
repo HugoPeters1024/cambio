@@ -405,7 +405,7 @@ pub fn process_single_event(
     }
 
     match &msg {
-        ServerMessage::PlayerConnected { player_id } => {
+        ServerMessage::PlayerConnected(player_id) => {
             if state.player_index.contains_key(player_id) {
                 reject!("Player {} is already connected.", player_id.player_number());
             }
@@ -430,18 +430,18 @@ pub fn process_single_event(
 
             state.player_index.insert(*player_id, player_entity);
         }
-        ServerMessage::PlayerDisconnected { player_id } => {
+        ServerMessage::PlayerDisconnected(player_id) => {
             let _ = player_must_exists!(player_id);
             state.player_index.remove(player_id);
         }
-        ServerMessage::SetUsername { actor, username } => {
+        ServerMessage::SetUsername(actor, username) => {
             let player_entity = player_must_exists!(actor);
             let Ok(mut player) = players.get_mut(player_entity) else {
                 reject!("Player index corrupted");
             };
             player.1.username = username.clone();
         }
-        ServerMessage::ReceiveFreshSlot { actor, slot_id } => {
+        ServerMessage::ReceiveFreshSlot(actor, slot_id) => {
             let player_entity = player_must_exists!(actor);
             if state.slot_index.contains_key(slot_id) {
                 reject!("Slot {} already exists.", slot_id.0);
@@ -493,12 +493,7 @@ pub fn process_single_event(
             player.1.slots.insert(*slot_id);
             state.slot_index.insert(*slot_id, slot_entity);
         }
-        ServerMessage::ReceiveFreshCardFromDeck {
-            actor,
-            card_id,
-            slot_id,
-            context,
-        } => {
+        ServerMessage::ReceiveFreshCardFromDeck(actor, slot_id, card_id, context) => {
             let _ = player_must_exists!(actor);
             let slot_entity = slot_must_exists!(slot_id);
             slot_must_not_have_card!(slot_id);
@@ -522,11 +517,7 @@ pub fn process_single_event(
 
             state.card_index.insert(*card_id, card_entity);
         }
-        ServerMessage::ReturnHeldCardToSlot {
-            actor,
-            card_id,
-            slot_id,
-        } => {
+        ServerMessage::ReturnHeldCardToSlot(actor, slot_id, card_id) => {
             let _player_entity = player_must_exists!(actor);
             let card_entity = card_must_exists!(card_id);
             let slot_entity = slot_must_exists!(slot_id);
@@ -554,11 +545,7 @@ pub fn process_single_event(
                 .insert(ChildOf(slot_entity))
                 .insert(Pickable::default());
         }
-        ServerMessage::PickUpSlotCard {
-            actor,
-            slot_id,
-            card_id,
-        } => {
+        ServerMessage::PickUpSlotCard(actor, slot_id, card_id) => {
             let player_entity = player_must_exists!(actor);
             let card_entity = card_must_exists!(card_id);
             let _slot_entity = slot_must_exists!(slot_id);
@@ -583,11 +570,7 @@ pub fn process_single_event(
                 .remove::<ChildOf>()
                 .remove::<Pickable>();
         }
-        ServerMessage::DropCardOnSlot {
-            actor,
-            card_id,
-            slot_id,
-        } => {
+        ServerMessage::DropCardOnSlot(actor, card_id, slot_id) => {
             let player_entity = player_must_exists!(actor);
             let slot_entity = slot_must_exists!(slot_id);
             let card_entity = card_must_exists!(card_id);
@@ -748,7 +731,7 @@ pub fn process_single_event(
                 }
             }
         }
-        ServerMessage::TakeFreshCardFromDeck { actor, card_id } => {
+        ServerMessage::TakeFreshCardFromDeck(actor, card_id) => {
             let player_entity = player_must_exists!(actor);
             let mut turn_state = must_have_turn!(actor);
 
@@ -933,7 +916,7 @@ pub fn process_single_event(
 
             state.discard_pile.push_front(*card_id);
         }
-        ServerMessage::PlayerAtTurn { player_id } => {
+        ServerMessage::PlayerAtTurn(player_id) => {
             let player_entity = player_must_exists!(player_id);
 
             for (entity, _) in player_at_turn.iter() {
@@ -941,7 +924,7 @@ pub fn process_single_event(
             }
             commands.entity(player_entity).insert(TurnState::Start);
         }
-        ServerMessage::TakeCardFromDiscardPile { actor, card_id } => {
+        ServerMessage::TakeCardFromDiscardPile(actor, card_id) => {
             let player_entity = player_must_exists!(actor);
             let card_entity = card_must_exists!(card_id);
             let mut turn_state = must_have_turn!(actor);
@@ -1101,11 +1084,13 @@ pub fn process_single_event(
                     .insert(BelongsToSlot(*origin_slot));
             }
         }
-        ServerMessage::FinishedReplayingHistory { .. } => {}
-        ServerMessage::PublishCardPublically { card_id, value } => {
+        ServerMessage::FinishedReplayingHistory(player_id) => {
+            player_must_exists!(player_id);
+        }
+        ServerMessage::PublishCardPublically(card_id, value) => {
             state.card_lookup.0.insert(*card_id, *value);
         }
-        ServerMessage::PublishCardForPlayer { card_id, value, .. } => {
+        ServerMessage::PublishCardForPlayer(_, card_id, value) => {
             if let Some(value) = value {
                 state.card_lookup.0.insert(*card_id, *value);
             }
@@ -1161,7 +1146,7 @@ pub fn process_single_event(
                 state.card_lookup.0.insert(*card_id, known_card.clone());
             }
         }
-        ServerMessage::SlapTable { actor } => {
+        ServerMessage::SlapTable(actor) => {
             if !immunity.is_empty() {
                 reject!("Only one player can slap the table");
             }
@@ -1309,7 +1294,7 @@ mod tests {
             state.discard_pile.push_front(card_id);
             state.card_index.insert(card_id, card_entity);
 
-            self.accepts(&ServerMessage::PublishCardPublically { card_id, value });
+            self.accepts(&ServerMessage::PublishCardPublically(card_id, value));
 
             self
         }
@@ -1359,110 +1344,82 @@ mod tests {
                 .enumerate()
                 .map(|(index, card)| (CardId(index as u64), card))
             {
-                self.accepts(&ServerMessage::PublishCardPublically {
-                    card_id,
-                    value: card,
-                });
+                self.accepts(&ServerMessage::PublishCardPublically(card_id, card));
             }
             self
         }
 
         fn one_player_one_card_start_of_turn() -> TestSetup {
             TestSetup::new().with_events(&[
-                ServerMessage::PlayerConnected {
-                    player_id: player0(),
-                },
-                ServerMessage::ReceiveFreshSlot {
-                    actor: player0(),
-                    slot_id: SlotId(0),
-                },
-                ServerMessage::ReceiveFreshCardFromDeck {
-                    actor: player0(),
-                    slot_id: SlotId(0),
-                    card_id: CardId(0),
-                    context: ReceivedCardContext::Normal,
-                },
-                ServerMessage::PlayerAtTurn {
-                    player_id: player0(),
-                },
+                ServerMessage::PlayerConnected(player0()),
+                ServerMessage::ReceiveFreshSlot(player0(), SlotId(0)),
+                ServerMessage::ReceiveFreshCardFromDeck(
+                    player0(),
+                    SlotId(0),
+                    CardId(0),
+                    ReceivedCardContext::Normal,
+                ),
+                ServerMessage::PlayerAtTurn(player0()),
             ])
         }
 
         fn one_player_with_slot_cards(cards: Vec<(CardId, KnownCard)>) -> Self {
-            let mut env = TestSetup::new().with_events(&[ServerMessage::PlayerConnected {
-                player_id: player0(),
-            }]);
+            let mut env =
+                TestSetup::new().with_events(&[ServerMessage::PlayerConnected(player0())]);
 
             for (i, (card_id, card)) in cards.iter().enumerate() {
-                env.accepts(&ServerMessage::PublishCardPublically {
-                    card_id: *card_id,
-                    value: card.clone(),
-                });
-                env.accepts(&ServerMessage::ReceiveFreshSlot {
-                    actor: player0(),
-                    slot_id: SlotId(i as u64),
-                });
-                env.accepts(&ServerMessage::ReceiveFreshCardFromDeck {
-                    actor: player0(),
-                    slot_id: SlotId(i as u64),
-                    card_id: *card_id,
-                    context: ReceivedCardContext::Normal,
-                });
+                env.accepts(&ServerMessage::PublishCardPublically(
+                    *card_id,
+                    card.clone(),
+                ));
+                env.accepts(&ServerMessage::ReceiveFreshSlot(
+                    player0(),
+                    SlotId(i as u64),
+                ));
+                env.accepts(&ServerMessage::ReceiveFreshCardFromDeck(
+                    player0(),
+                    SlotId(i as u64),
+                    *card_id,
+                    ReceivedCardContext::Normal,
+                ));
             }
 
-            env.accepts(&ServerMessage::PlayerAtTurn {
-                player_id: player0(),
-            });
+            env.accepts(&ServerMessage::PlayerAtTurn(player0()));
 
             env
         }
 
         fn one_player_two_cards_start_of_turn() -> TestSetup {
             TestSetup::new().with_events(&[
-                ServerMessage::PlayerConnected {
-                    player_id: player0(),
-                },
-                ServerMessage::ReceiveFreshSlot {
-                    actor: player0(),
-                    slot_id: SlotId(0),
-                },
-                ServerMessage::ReceiveFreshCardFromDeck {
-                    actor: player0(),
-                    slot_id: SlotId(0),
-                    card_id: CardId(0),
-                    context: ReceivedCardContext::Normal,
-                },
-                ServerMessage::ReceiveFreshSlot {
-                    actor: player0(),
-                    slot_id: SlotId(1),
-                },
-                ServerMessage::ReceiveFreshCardFromDeck {
-                    actor: player0(),
-                    slot_id: SlotId(1),
-                    card_id: CardId(1),
-                    context: ReceivedCardContext::Normal,
-                },
-                ServerMessage::PlayerAtTurn {
-                    player_id: player0(),
-                },
+                ServerMessage::PlayerConnected(player0()),
+                ServerMessage::ReceiveFreshSlot(player0(), SlotId(0)),
+                ServerMessage::ReceiveFreshCardFromDeck(
+                    player0(),
+                    SlotId(0),
+                    CardId(0),
+                    ReceivedCardContext::Normal,
+                ),
+                ServerMessage::ReceiveFreshSlot(player0(), SlotId(1)),
+                ServerMessage::ReceiveFreshCardFromDeck(
+                    player0(),
+                    SlotId(1),
+                    CardId(1),
+                    ReceivedCardContext::Normal,
+                ),
+                ServerMessage::PlayerAtTurn(player0()),
             ])
         }
 
         fn two_players_one_cards() -> TestSetup {
             Self::one_player_one_card_start_of_turn().with_events(&[
-                ServerMessage::PlayerConnected {
-                    player_id: player1(),
-                },
-                ServerMessage::ReceiveFreshSlot {
-                    actor: player1(),
-                    slot_id: SlotId(1),
-                },
-                ServerMessage::ReceiveFreshCardFromDeck {
-                    actor: player1(),
-                    slot_id: SlotId(1),
-                    card_id: CardId(1),
-                    context: ReceivedCardContext::Normal,
-                },
+                ServerMessage::PlayerConnected(player1()),
+                ServerMessage::ReceiveFreshSlot(player1(), SlotId(1)),
+                ServerMessage::ReceiveFreshCardFromDeck(
+                    player1(),
+                    SlotId(1),
+                    CardId(1),
+                    ReceivedCardContext::Normal,
+                ),
             ])
         }
 
@@ -1473,13 +1430,9 @@ mod tests {
 
     #[test]
     fn test_player_cannot_connect_twice() {
-        let mut env = TestSetup::new().with_event(ServerMessage::PlayerConnected {
-            player_id: player0(),
-        });
+        let mut env = TestSetup::new().with_event(ServerMessage::PlayerConnected(player0()));
 
-        env.rejects(&ServerMessage::PlayerConnected {
-            player_id: player0(),
-        });
+        env.rejects(&ServerMessage::PlayerConnected(player0()));
     }
 
     #[rstest::rstest]
@@ -1490,15 +1443,8 @@ mod tests {
         let mut world = TestSetup::one_player_one_card_start_of_turn()
             .with_all_cards_known()
             .with_events(&[
-                ServerMessage::PublishCardForPlayer {
-                    player_id: player0(),
-                    card_id: CardId(1),
-                    value: Some(known_card),
-                },
-                ServerMessage::TakeFreshCardFromDeck {
-                    actor: player0(),
-                    card_id: CardId(1),
-                },
+                ServerMessage::PublishCardForPlayer(player0(), CardId(1), Some(known_card)),
+                ServerMessage::TakeFreshCardFromDeck(player0(), CardId(1)),
                 ServerMessage::DropCardOnDiscardPile {
                     actor: player0(),
                     card_id: CardId(1),
@@ -1525,10 +1471,7 @@ mod tests {
         let mut world = TestSetup::one_player_one_card_start_of_turn()
             .with_all_cards_known()
             .with_events(&[
-                ServerMessage::TakeFreshCardFromDeck {
-                    actor: player0(),
-                    card_id: CardId(1),
-                },
+                ServerMessage::TakeFreshCardFromDeck(player0(), CardId(1)),
                 ServerMessage::SwapHeldCardWithSlotCard {
                     actor: player0(),
                     slot_card_id: CardId(0),
@@ -1568,23 +1511,20 @@ mod tests {
                 },
             )
             .with_events(&[
-                ServerMessage::TakeCardFromDiscardPile {
-                    actor: player0(),
-                    card_id: CardId(5),
-                },
+                ServerMessage::TakeCardFromDiscardPile(player0(), CardId(5)),
                 ServerMessage::SwapHeldCardWithSlotCard {
                     actor: player0(),
                     held_card_id: CardId(5),
                     slot_card_id: CardId(0),
                     slot_id: SlotId(0),
                 },
-                ServerMessage::PublishCardPublically {
-                    card_id: CardId(0),
-                    value: KnownCard {
+                ServerMessage::PublishCardPublically(
+                    CardId(0),
+                    KnownCard {
                         rank: Rank::King,
                         suit: Suit::Hearts,
                     },
-                },
+                ),
                 ServerMessage::DropCardOnDiscardPile {
                     actor: player0(),
                     card_id: CardId(0),
@@ -1599,10 +1539,7 @@ mod tests {
     fn taking_card_from_deck_must_match_state() {
         TestSetup::one_player_one_card_start_of_turn()
             .with_all_cards_known()
-            .rejects(&ServerMessage::TakeFreshCardFromDeck {
-                actor: player0(),
-                card_id: CardId(30),
-            });
+            .rejects(&ServerMessage::TakeFreshCardFromDeck(player0(), CardId(30)));
     }
 
     #[test]
@@ -1611,18 +1548,15 @@ mod tests {
 
         for i in 1..51 {
             // We don't want to run into any buffs
-            env.accepts(&ServerMessage::PublishCardPublically {
-                card_id: CardId(i),
-                value: KnownCard {
+            env.accepts(&ServerMessage::PublishCardPublically(
+                CardId(i),
+                KnownCard {
                     rank: Rank::Ace,
                     suit: Suit::Hearts,
                 },
-            });
+            ));
 
-            env.accepts(&ServerMessage::TakeFreshCardFromDeck {
-                actor: player0(),
-                card_id: CardId(i),
-            });
+            env.accepts(&ServerMessage::TakeFreshCardFromDeck(player0(), CardId(i)));
 
             env.accepts(&ServerMessage::DropCardOnDiscardPile {
                 actor: player0(),
@@ -1631,15 +1565,10 @@ mod tests {
                 offset_y: 0.0,
                 rotation: 0.0,
             });
-            env.accepts(&ServerMessage::PlayerAtTurn {
-                player_id: player0(),
-            });
+            env.accepts(&ServerMessage::PlayerAtTurn(player0()));
         }
 
-        env.rejects(&ServerMessage::TakeFreshCardFromDeck {
-            actor: player0(),
-            card_id: CardId(52),
-        });
+        env.rejects(&ServerMessage::TakeFreshCardFromDeck(player0(), CardId(52)));
     }
 
     #[test]
@@ -1653,27 +1582,27 @@ mod tests {
                 },
             )
             .with_events(&[
-                ServerMessage::PublishCardPublically {
-                    card_id: CardId(0),
-                    value: KnownCard {
+                ServerMessage::PublishCardPublically(
+                    CardId(0),
+                    KnownCard {
                         rank: Rank::Ace,
                         suit: Suit::Spades,
                     },
-                },
-                ServerMessage::PublishCardPublically {
-                    card_id: CardId(1),
-                    value: KnownCard {
+                ),
+                ServerMessage::PublishCardPublically(
+                    CardId(1),
+                    KnownCard {
                         rank: Rank::Ace,
                         suit: Suit::Diamonds,
                     },
-                },
+                ),
             ]);
 
-        env.accepts(&ServerMessage::PickUpSlotCard {
-            actor: player0(),
-            slot_id: SlotId(0),
-            card_id: CardId(0),
-        });
+        env.accepts(&ServerMessage::PickUpSlotCard(
+            player0(),
+            SlotId(0),
+            CardId(0),
+        ));
 
         env.accepts(&ServerMessage::DropCardOnDiscardPile {
             actor: player0(),
@@ -1683,11 +1612,11 @@ mod tests {
             rotation: 0.0,
         });
 
-        env.accepts(&ServerMessage::PickUpSlotCard {
-            actor: player0(),
-            slot_id: SlotId(1),
-            card_id: CardId(1),
-        });
+        env.accepts(&ServerMessage::PickUpSlotCard(
+            player0(),
+            SlotId(1),
+            CardId(1),
+        ));
 
         env.rejects(&ServerMessage::DropCardOnDiscardPile {
             actor: player0(),
@@ -1703,18 +1632,15 @@ mod tests {
         TestSetup::one_player_two_cards_start_of_turn()
             .with_all_cards_known()
             .with_events(&[
-                ServerMessage::PublishCardForPlayer {
-                    player_id: player0(),
-                    card_id: CardId(2),
-                    value: Some(KnownCard {
+                ServerMessage::PublishCardForPlayer(
+                    player0(),
+                    CardId(2),
+                    Some(KnownCard {
                         rank: Rank::Jack,
                         suit: Suit::Hearts,
                     }),
-                },
-                ServerMessage::TakeFreshCardFromDeck {
-                    actor: player0(),
-                    card_id: CardId(2),
-                },
+                ),
+                ServerMessage::TakeFreshCardFromDeck(player0(), CardId(2)),
                 ServerMessage::DropCardOnDiscardPile {
                     actor: player0(),
                     card_id: CardId(2),
@@ -1722,22 +1648,14 @@ mod tests {
                     offset_y: 0.0,
                     rotation: 0.0,
                 },
-                ServerMessage::PickUpSlotCard {
-                    actor: player0(),
-                    slot_id: SlotId(0),
-                    card_id: CardId(0),
-                },
+                ServerMessage::PickUpSlotCard(player0(), SlotId(0), CardId(0)),
                 ServerMessage::SwapHeldCardWithSlotCard {
                     actor: player0(),
                     held_card_id: CardId(0),
                     slot_card_id: CardId(1),
                     slot_id: SlotId(1),
                 },
-                ServerMessage::DropCardOnSlot {
-                    actor: player0(),
-                    card_id: CardId(1),
-                    slot_id: SlotId(0),
-                },
+                ServerMessage::DropCardOnSlot(player0(), CardId(1), SlotId(0)),
             ]);
     }
 
@@ -1768,11 +1686,11 @@ mod tests {
         );
 
         // We discard our 3
-        env.accepts(&ServerMessage::PickUpSlotCard {
-            actor: player0(),
-            slot_id: SlotId(0),
-            card_id: CardId(0),
-        });
+        env.accepts(&ServerMessage::PickUpSlotCard(
+            player0(),
+            SlotId(0),
+            CardId(0),
+        ));
         env.accepts(&ServerMessage::DropCardOnDiscardPile {
             actor: player0(),
             card_id: CardId(0),
@@ -1782,10 +1700,10 @@ mod tests {
         });
 
         // We then pick up the 3 as part of our turn
-        env.accepts(&ServerMessage::TakeCardFromDiscardPile {
-            actor: player0(),
-            card_id: CardId(0),
-        });
+        env.accepts(&ServerMessage::TakeCardFromDiscardPile(
+            player0(),
+            CardId(0),
+        ));
 
         // and try to undo this action
         env.accepts(&ServerMessage::DropCardOnDiscardPile {
@@ -1797,10 +1715,10 @@ mod tests {
         });
 
         // pick it up again anyway
-        env.accepts(&ServerMessage::TakeCardFromDiscardPile {
-            actor: player0(),
-            card_id: CardId(0),
-        });
+        env.accepts(&ServerMessage::TakeCardFromDiscardPile(
+            player0(),
+            CardId(0),
+        ));
 
         // swap
         env.accepts(&ServerMessage::SwapHeldCardWithSlotCard {
@@ -1842,17 +1760,14 @@ mod tests {
             .with_all_cards_known()
             .with_events(&[
                 // First get the card swap buff
-                ServerMessage::PublishCardPublically {
-                    card_id: CardId(2),
-                    value: KnownCard {
+                ServerMessage::PublishCardPublically(
+                    CardId(2),
+                    KnownCard {
                         rank: Rank::Jack,
                         suit: Suit::Hearts,
                     },
-                },
-                ServerMessage::TakeFreshCardFromDeck {
-                    actor: player0(),
-                    card_id: CardId(2),
-                },
+                ),
+                ServerMessage::TakeFreshCardFromDeck(player0(), CardId(2)),
                 ServerMessage::DropCardOnDiscardPile {
                     actor: player0(),
                     card_id: CardId(2),
@@ -1860,11 +1775,7 @@ mod tests {
                     offset_y: 0.0,
                     rotation: 0.0,
                 },
-                ServerMessage::PickUpSlotCard {
-                    actor: player0(),
-                    slot_id: SlotId(0),
-                    card_id: CardId(0),
-                },
+                ServerMessage::PickUpSlotCard(player0(), SlotId(0), CardId(0)),
                 ServerMessage::SwapHeldCardWithSlotCard {
                     actor: player0(),
                     held_card_id: CardId(0),
@@ -1872,13 +1783,13 @@ mod tests {
                     slot_id: SlotId(1),
                 },
                 // make sure that the swapped card is also a Jack.
-                ServerMessage::PublishCardPublically {
-                    card_id: CardId(1),
-                    value: KnownCard {
+                ServerMessage::PublishCardPublically(
+                    CardId(1),
+                    KnownCard {
                         rank: Rank::Jack,
                         suit: Suit::Diamonds,
                     },
-                },
+                ),
                 ServerMessage::DropCardOnDiscardPile {
                     actor: player0(),
                     card_id: CardId(1),

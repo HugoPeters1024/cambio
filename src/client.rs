@@ -574,12 +574,12 @@ fn effects_for_accepted_messages(
 ) {
     for AcceptedMessage(msg) in accepted.read() {
         match msg {
-            ServerMessage::FinishedReplayingHistory { player_id } => {
+            ServerMessage::FinishedReplayingHistory(player_id) => {
                 if player_id == player_ids.get(*me).unwrap().1 {
                     *catched_up = true;
                 }
             }
-            ServerMessage::PlayerAtTurn { player_id, .. } => {
+            ServerMessage::PlayerAtTurn(player_id) => {
                 let me_id = player_ids.get(*me).unwrap().1;
                 if player_id == me_id && *catched_up {
                     commands.spawn((
@@ -588,9 +588,7 @@ fn effects_for_accepted_messages(
                     ));
                 }
             }
-            ServerMessage::ReceiveFreshCardFromDeck {
-                context, card_id, ..
-            } => {
+            ServerMessage::ReceiveFreshCardFromDeck(_, _, card_id, context) => {
                 if *catched_up {
                     if let Some(card_entity) = state.card_index.get(card_id) {
                         commands
@@ -617,7 +615,7 @@ fn effects_for_accepted_messages(
                     };
                 }
             }
-            ServerMessage::TakeFreshCardFromDeck { .. } => {
+            ServerMessage::TakeFreshCardFromDeck(..) => {
                 if *catched_up {
                     commands.spawn((
                         AudioPlayer::new(assets.card_sweep.clone()),
@@ -648,7 +646,7 @@ fn effects_for_accepted_messages(
                     }
                 }
             }
-            ServerMessage::DropCardOnSlot { .. } | ServerMessage::DropCardOnDiscardPile { .. } => {
+            ServerMessage::DropCardOnSlot(..) | ServerMessage::DropCardOnDiscardPile { .. } => {
                 if *catched_up {
                     commands.spawn((
                         AudioPlayer::new(assets.card_laydown.clone()),
@@ -664,7 +662,7 @@ fn effects_for_accepted_messages(
                     ));
                 }
             }
-            ServerMessage::SlapTable { .. } => {
+            ServerMessage::SlapTable(..) => {
                 if *catched_up {
                     commands.spawn((
                         AudioPlayer::new(assets.slap_table_sound.clone()),
@@ -672,7 +670,7 @@ fn effects_for_accepted_messages(
                     ));
                 }
             }
-            ServerMessage::PlayerDisconnected { player_id, .. } => {
+            ServerMessage::PlayerDisconnected(player_id) => {
                 // the player is already not in the state anymore
                 let player_entity = player_ids
                     .iter()

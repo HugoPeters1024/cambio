@@ -79,11 +79,7 @@ pub fn handle_rejections(
             );
             commands.run_system_cached_with(
                 host_eval_event,
-                ServerMessage::ReturnHeldCardToSlot {
-                    actor,
-                    card_id,
-                    slot_id: *slot_id,
-                },
+                ServerMessage::ReturnHeldCardToSlot(actor, *slot_id, card_id),
             );
             commands.run_system_cached_with(give_penalty_card, actor);
         }
@@ -115,16 +111,11 @@ pub fn setup_new_player(
         }
     }
 
-    commands.run_system_cached_with(
-        host_eval_event,
-        ServerMessage::PlayerConnected { player_id },
-    );
+    commands.run_system_cached_with(host_eval_event, ServerMessage::PlayerConnected(player_id));
 
     commands.run_system_cached_with(
         host_eval_event,
-        ServerMessage::FinishedReplayingHistory {
-            player_id: player_id,
-        },
+        ServerMessage::FinishedReplayingHistory(player_id),
     );
 
     for i in 0..4 {
@@ -132,10 +123,7 @@ pub fn setup_new_player(
 
         commands.run_system_cached_with(
             host_eval_event,
-            ServerMessage::ReceiveFreshSlot {
-                actor: player_id,
-                slot_id,
-            },
+            ServerMessage::ReceiveFreshSlot(player_id, slot_id),
         );
 
         commands.run_system_cached_with(
@@ -153,7 +141,7 @@ pub fn setup_new_player(
     }
 
     if state.player_index.is_empty() {
-        commands.run_system_cached_with(host_eval_event, ServerMessage::PlayerAtTurn { player_id });
+        commands.run_system_cached_with(host_eval_event, ServerMessage::PlayerAtTurn(player_id));
     }
 }
 
@@ -197,12 +185,12 @@ pub fn give_penalty_card(
     if let Some(free_slot) = free_slot {
         commands.run_system_cached_with(
             host_eval_event,
-            ServerMessage::ReceiveFreshCardFromDeck {
-                actor: player_id,
-                slot_id: *free_slot,
-                card_id: state.free_cards[0],
-                context: ReceivedCardContext::Penalty,
-            },
+            ServerMessage::ReceiveFreshCardFromDeck(
+                player_id,
+                *free_slot,
+                state.free_cards[0],
+                ReceivedCardContext::Penalty,
+            ),
         );
     } else {
         if player.slots.len() >= 8 {
@@ -212,20 +200,17 @@ pub fn give_penalty_card(
         let fresh_slot_id = host.slot_seq.generate();
         commands.run_system_cached_with(
             host_eval_event,
-            ServerMessage::ReceiveFreshSlot {
-                actor: player_id,
-                slot_id: SlotId(fresh_slot_id),
-            },
+            ServerMessage::ReceiveFreshSlot(player_id, SlotId(fresh_slot_id)),
         );
 
         commands.run_system_cached_with(
             host_eval_event,
-            ServerMessage::ReceiveFreshCardFromDeck {
-                actor: player_id,
-                slot_id: SlotId(fresh_slot_id),
-                card_id: state.free_cards[0],
-                context: ReceivedCardContext::Penalty,
-            },
+            ServerMessage::ReceiveFreshCardFromDeck(
+                player_id,
+                SlotId(fresh_slot_id),
+                state.free_cards[0],
+                ReceivedCardContext::Penalty,
+            ),
         );
     }
 }
@@ -238,12 +223,7 @@ pub fn give_card_to_player(
     let front_card = state.free_cards[0];
     commands.run_system_cached_with(
         host_eval_event,
-        ServerMessage::ReceiveFreshCardFromDeck {
-            actor: player_id,
-            slot_id,
-            card_id: front_card,
-            context: context.clone(),
-        },
+        ServerMessage::ReceiveFreshCardFromDeck(player_id, slot_id, front_card, context.clone()),
     );
 
     if context == ReceivedCardContext::Penalty {
@@ -301,9 +281,7 @@ fn trigger_host_server_events(
             } else {
                 commands.run_system_cached_with(
                     host_eval_event,
-                    ServerMessage::PlayerAtTurn {
-                        player_id: *next_player_id,
-                    },
+                    ServerMessage::PlayerAtTurn(*next_player_id),
                 );
             };
         }

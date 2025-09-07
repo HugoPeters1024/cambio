@@ -54,25 +54,11 @@ pub enum ClientClaim {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum ServerMessage {
-    PlayerConnected {
-        player_id: PlayerId,
-    },
-    FinishedReplayingHistory {
-        player_id: PlayerId,
-    },
-    PlayerDisconnected {
-        player_id: PlayerId,
-    },
-    ReceiveFreshSlot {
-        actor: PlayerId,
-        slot_id: SlotId,
-    },
-    ReceiveFreshCardFromDeck {
-        actor: PlayerId,
-        slot_id: SlotId,
-        card_id: CardId,
-        context: ReceivedCardContext,
-    },
+    PlayerConnected(PlayerId),
+    FinishedReplayingHistory(PlayerId),
+    PlayerDisconnected(PlayerId),
+    ReceiveFreshSlot(PlayerId, SlotId),
+    ReceiveFreshCardFromDeck(PlayerId, SlotId, CardId, ReceivedCardContext),
     RevealCardAtSlot {
         actor: PlayerId,
         card_id: CardId,
@@ -83,26 +69,15 @@ pub enum ServerMessage {
     /// Always means that some player picked up this
     /// card. This action is never taken as part of the
     /// normal turn flow, but can still happen during a turn.
-    PickUpSlotCard {
-        actor: PlayerId,
-        slot_id: SlotId,
-        card_id: CardId,
-    },
+    PickUpSlotCard(PlayerId, SlotId, CardId),
     SwapHeldCardWithSlotCard {
         actor: PlayerId,
         slot_id: SlotId,
         slot_card_id: CardId,
         held_card_id: CardId,
     },
-    DropCardOnSlot {
-        actor: PlayerId,
-        card_id: CardId,
-        slot_id: SlotId,
-    },
-    TakeFreshCardFromDeck {
-        actor: PlayerId,
-        card_id: CardId,
-    },
+    DropCardOnSlot(PlayerId, CardId, SlotId),
+    TakeFreshCardFromDeck(PlayerId, CardId),
     DropCardOnDiscardPile {
         actor: PlayerId,
         card_id: CardId,
@@ -110,59 +85,32 @@ pub enum ServerMessage {
         offset_y: f32,
         rotation: f32,
     },
-    TakeCardFromDiscardPile {
-        actor: PlayerId,
-        card_id: CardId,
-    },
-    PlayerAtTurn {
-        player_id: PlayerId,
-    },
-    PublishCardPublically {
-        card_id: CardId,
-        value: KnownCard,
-    },
-    PublishCardForPlayer {
-        player_id: PlayerId,
-        card_id: CardId,
-        value: Option<KnownCard>,
-    },
+    TakeCardFromDiscardPile(PlayerId, CardId),
+    PlayerAtTurn(PlayerId),
+    PublishCardPublically(CardId, KnownCard),
+    PublishCardForPlayer(PlayerId, CardId, Option<KnownCard>),
     ShuffleDiscardPile {
         card_ids: Vec<CardId>,
         // The shuffle seed must be determistic
         // for replaying purposes
         shuffle_seed: u64,
     },
-    SlapTable {
-        actor: PlayerId,
-    },
-    ReturnHeldCardToSlot {
-        actor: PlayerId,
-        slot_id: SlotId,
-        card_id: CardId,
-    },
+    SlapTable(PlayerId),
+    ReturnHeldCardToSlot(PlayerId, SlotId, CardId),
     GameWillFinishIn(Duration),
     GameFinished {
         all_cards: HashMap<CardId, KnownCard>,
         final_scores: HashMap<PlayerId, i32>,
     },
-    SetUsername {
-        actor: PlayerId,
-        username: String,
-    },
+    SetUsername(PlayerId, String),
 }
 
 impl ServerMessage {
     pub fn redacted_for(&self, redacted_for: &PlayerId) -> ServerMessage {
         match self {
-            ServerMessage::PublishCardForPlayer {
-                player_id, card_id, ..
-            } => {
+            ServerMessage::PublishCardForPlayer(player_id, card_id, _) => {
                 if redacted_for != player_id {
-                    ServerMessage::PublishCardForPlayer {
-                        value: None,
-                        player_id: player_id.clone(),
-                        card_id: card_id.clone(),
-                    }
+                    ServerMessage::PublishCardForPlayer(player_id.clone(), card_id.clone(), None)
                 } else {
                     self.clone()
                 }
