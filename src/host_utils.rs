@@ -40,9 +40,9 @@ pub fn host_eval_event(
 
     commands.run_system_cached_with(
         process_single_event.pipe(
-            |In(result): In<Result<ServerMessage, RejectionReason>>, mut commands: Commands| {
+            |In(result): In<Result<(), RejectionReason>>, mut commands: Commands| {
                 match result {
-                    Ok(_) => (),
+                    Ok(()) => (),
                     Err(rejection) => {
                         commands.run_system_cached_with(handle_rejections, rejection);
                     }

@@ -566,7 +566,7 @@ fn client_receives_reliable_results(
                 .0;
 
         commands.run_system_cached_with(
-            process_single_event.pipe(|_: In<Result<ServerMessage, RejectionReason>>| ()),
+            process_single_event.pipe(|_: In<Result<(), RejectionReason>>| ()),
             (*root, message),
         );
     }

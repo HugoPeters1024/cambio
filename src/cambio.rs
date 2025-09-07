@@ -224,7 +224,7 @@ pub fn process_single_event(
     mut accepted: EventWriter<AcceptedMessage>,
     mut player_at_turn: Query<(Entity, &mut TurnState)>,
     mut commands: Commands,
-) -> Result<ServerMessage, RejectionReason> {
+) -> Result<(), RejectionReason> {
     info!("Processing message: {:?}", msg);
 
     macro_rules! reject {
@@ -1226,7 +1226,7 @@ pub fn process_single_event(
 
     // If we're still here then we accepted the message.
     accepted.write(AcceptedMessage(msg.clone()));
-    Ok(msg)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1332,7 +1332,7 @@ mod tests {
         fn run_event_inplace(
             &mut self,
             event: &ServerMessage,
-        ) -> Result<ServerMessage, RejectionReason> {
+        ) -> Result<(), RejectionReason> {
             self.world
                 .run_system_cached_with(process_single_event, (self.root, event.clone()))
                 .unwrap()
