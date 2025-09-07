@@ -395,6 +395,7 @@ fn host_processes_reliable_claims(
                 card_id,
                 slot_id,
                 check_turn: true,
+                for_everyone: false,
             },
             ClientClaim::TakeFreshCardFromDeck => {
                 ServerMessage::TakeFreshCardFromDeck(*claimer_id, state.free_cards[0])
@@ -529,13 +530,27 @@ fn host_persists_and_broadcasts_accepted_events(
         // need to process these events ourselves. It is however important that they are
         // persisted so that players that join later can see the discard pile for example.
         match msg {
-            ServerMessage::TakeFreshCardFromDeck(actor, card_id)
-            | ServerMessage::RevealCardAtSlot { actor, card_id, .. } => {
+            ServerMessage::TakeFreshCardFromDeck(actor, card_id) => {
                 broadcast_and_store!(ServerMessage::PublishCardForPlayer(
                     *actor,
                     *card_id,
                     Some(state.card_lookup.0.get(&*card_id).unwrap().clone())
                 ));
+            }
+            ServerMessage::RevealCardAtSlot {
+                actor,
+                card_id,
+                for_everyone,
+                ..
+            } => {
+                let value = state.card_lookup.0.get(&*card_id).unwrap().clone();
+                let msg = if *for_everyone {
+                    ServerMessage::PublishCardPublically(*card_id, value)
+                } else {
+                    ServerMessage::PublishCardForPlayer(*actor, *card_id, Some(value))
+                };
+
+                broadcast_and_store!(msg);
             }
             ServerMessage::DropCardOnDiscardPile { card_id, .. } => {
                 broadcast_and_store!(ServerMessage::PublishCardPublically(

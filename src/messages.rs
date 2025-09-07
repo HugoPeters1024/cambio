@@ -65,6 +65,8 @@ pub enum ServerMessage {
         slot_id: SlotId,
         // should the actor have the turn
         check_turn: bool,
+        // should everybody see the card?
+        for_everyone: bool,
     },
     /// Always means that some player picked up this
     /// card. This action is never taken as part of the

@@ -673,6 +673,7 @@ pub fn process_single_event(
             card_id,
             slot_id,
             check_turn,
+            for_everyone,
         } => {
             let _player_entity = player_must_exists!(actor);
             let card_entity = card_must_exists!(card_id);
@@ -723,7 +724,7 @@ pub fn process_single_event(
             }
 
             // Only reveal the card if we're the one who picked it up
-            if actor_is_me!(actor) {
+            if actor_is_me!(actor) || *for_everyone {
                 if let Some(known_card) = state.card_lookup.0.get(card_id) {
                     commands.entity(card_entity).insert(*known_card).insert(
                         UnrevealKnownCardTimer(Timer::from_seconds(3.0, TimerMode::Once)),
@@ -1337,10 +1338,7 @@ mod tests {
             );
         }
 
-        fn run_event_inplace(
-            &mut self,
-            event: &ServerMessage,
-        ) -> Result<(), RejectionReason> {
+        fn run_event_inplace(&mut self, event: &ServerMessage) -> Result<(), RejectionReason> {
             self.world
                 .run_system_cached_with(process_single_event, (self.root, event.clone()))
                 .unwrap()

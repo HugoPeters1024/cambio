@@ -75,6 +75,7 @@ pub fn handle_rejections(
                     card_id,
                     slot_id: *slot_id,
                     check_turn: false,
+                    for_everyone: true,
                 },
             );
             commands.run_system_cached_with(
@@ -234,6 +235,7 @@ pub fn give_card_to_player(
                 slot_id,
                 card_id: front_card,
                 check_turn: false,
+                for_everyone: true,
             },
         );
     };
