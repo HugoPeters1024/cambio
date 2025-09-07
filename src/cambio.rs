@@ -98,11 +98,11 @@ pub enum TurnBuff {
     MayLookAtOwnCard,
     MayLookAtOtherPlayersCard,
     MaySwapTwoCards {
-        has_swapped_from_slot: Option<SlotId>,
+        swap_origin: Option<SlotId>,
     },
     MayLookAtCardAndThenSwap {
         has_looked_at: Option<SlotId>,
-        has_swapped_from_slot: Option<SlotId>,
+        swap_origin: Option<SlotId>,
     },
 }
 
@@ -648,10 +648,10 @@ pub fn process_single_event(
                     let taken_from_slot = slot_ids.get(*taken_from_slot_entity).unwrap();
                     match &*turn_state {
                         TurnState::HasBuff(TurnBuff::MaySwapTwoCards {
-                            has_swapped_from_slot: Some(swap_origin),
+                            swap_origin: Some(swap_origin),
                         })
                         | TurnState::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
-                            has_swapped_from_slot: Some(swap_origin),
+                            swap_origin: Some(swap_origin),
                             ..
                         }) => {
                             if swap_origin != slot_id {
@@ -729,7 +729,7 @@ pub fn process_single_event(
                             }
                             *turn_state = TurnState::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
                                 has_looked_at: Some(*slot_id),
-                                has_swapped_from_slot: None,
+                                swap_origin: None,
                             })
                         }
                     },
@@ -826,6 +826,26 @@ pub fn process_single_event(
                         .insert(MayGiveCardTo(*stolen_from));
                 }
 
+                // It might actually be the case that this player does currently have a
+                // turn and they have just swapped to cards. In that case this is just a
+                // shortcut way to end the turn.
+                if let Ok((_, mut turn_state)) = player_at_turn.get_mut(player_entity) {
+                    match *turn_state {
+                        TurnState::HasBuff(TurnBuff::MaySwapTwoCards {
+                            swap_origin: Some(_),
+                        }) => {
+                            *turn_state = TurnState::Finished;
+                        }
+                        TurnState::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
+                            swap_origin: Some(_),
+                            ..
+                        }) => {
+                            *turn_state = TurnState::Finished;
+                        }
+                        _ => {}
+                    };
+                }
+
                 // Mark the card as used for a discard opportunity, preventing others
                 // from doing it again on the same card.
                 commands.entity(card_entity).insert(WasMatchingDiscard);
@@ -871,13 +891,12 @@ pub fn process_single_event(
                             }
                         } else if known_value.rank == Rank::Jack || known_value.rank == Rank::Queen
                         {
-                            *turn_state = TurnState::HasBuff(TurnBuff::MaySwapTwoCards {
-                                has_swapped_from_slot: None,
-                            });
+                            *turn_state =
+                                TurnState::HasBuff(TurnBuff::MaySwapTwoCards { swap_origin: None });
                         } else if known_value.rank == Rank::King {
                             *turn_state = TurnState::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
                                 has_looked_at: None,
-                                has_swapped_from_slot: None,
+                                swap_origin: None,
                             });
                         } else {
                             *turn_state = TurnState::Finished;
@@ -996,7 +1015,7 @@ pub fn process_single_event(
                     reject!("Cannot swap a card at this point");
                 }
                 TurnState::HasBuff(TurnBuff::MaySwapTwoCards {
-                    has_swapped_from_slot,
+                    swap_origin: has_swapped_from_slot,
                 }) => {
                     let Ok(BelongsToSlot(originating_slot_entity)) =
                         belongs_to_slot.get(held_card_entity)
@@ -1011,14 +1030,14 @@ pub fn process_single_event(
                         }
                         None => {
                             *turn_state = TurnState::HasBuff(TurnBuff::MaySwapTwoCards {
-                                has_swapped_from_slot: Some(*originating_slot),
+                                swap_origin: Some(*originating_slot),
                             });
                         }
                     }
                 }
                 TurnState::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
                     has_looked_at,
-                    has_swapped_from_slot,
+                    swap_origin: has_swapped_from_slot,
                 }) => {
                     let Some(has_looked_at_slot) = has_looked_at else {
                         reject!("You first need to look at a card");
@@ -1041,7 +1060,7 @@ pub fn process_single_event(
 
                     *turn_state = TurnState::HasBuff(TurnBuff::MayLookAtCardAndThenSwap {
                         has_looked_at: Some(has_looked_at_slot),
-                        has_swapped_from_slot: Some(*originating_slot),
+                        swap_origin: Some(*originating_slot),
                     });
                 }
             }
@@ -1297,11 +1316,7 @@ mod tests {
 
         fn with_events(mut self, events: &[ServerMessage]) -> TestSetup {
             for event in events {
-                assert!(
-                    self.run_event_inplace(event),
-                    "Unexpectedly rejected event in setup phase: {:?}",
-                    event
-                );
+                self.accepts(event);
             }
             self
         }
@@ -1311,26 +1326,31 @@ mod tests {
         }
 
         fn accepts(&mut self, event: &ServerMessage) {
-            assert!(
-                self.run_event_inplace(event),
-                "Unexpectedly rejected event: {:?}",
-                event
-            );
+            match self.run_event_inplace(event) {
+                Ok(_) => {}
+                Err(reason) => assert!(
+                    false,
+                    "Unexpectedly rejected event: {:?} for reason ({:?})",
+                    event, reason
+                ),
+            }
         }
 
         fn rejects(&mut self, event: &ServerMessage) {
             assert!(
-                !self.run_event_inplace(event),
+                !self.run_event_inplace(event).is_ok(),
                 "Unexpectedly accepted event: {:?}",
                 event
             );
         }
 
-        fn run_event_inplace(&mut self, event: &ServerMessage) -> bool {
+        fn run_event_inplace(
+            &mut self,
+            event: &ServerMessage,
+        ) -> Result<ServerMessage, RejectionReason> {
             self.world
                 .run_system_cached_with(process_single_event, (self.root, event.clone()))
                 .unwrap()
-                .is_ok()
         }
 
         fn with_all_cards_known(mut self) -> TestSetup {
@@ -1339,7 +1359,7 @@ mod tests {
                 .enumerate()
                 .map(|(index, card)| (CardId(index as u64), card))
             {
-                self.run_event_inplace(&ServerMessage::PublishCardPublically {
+                self.accepts(&ServerMessage::PublishCardPublically {
                     card_id,
                     value: card,
                 });
@@ -1798,6 +1818,75 @@ mod tests {
             offset_y: 0.0,
             rotation: 0.0,
         });
+
+        let mut world = env.get_world();
+
+        let state = world
+            .query::<&mut CambioState>()
+            .single_mut(&mut world)
+            .unwrap()
+            .clone();
+        let turn_state = world
+            .get::<TurnState>(state.player_index[&player0()])
+            .unwrap();
+
+        assert_eq!(*turn_state, TurnState::Finished);
+    }
+
+    /// Tests that dropping a card on the discard pile during a swap is allowed
+    /// and propely finishes the swap action. (It should be equivalent to first dropping
+    /// the card on the slot and then picking it up again.)
+    #[test]
+    fn drop_card_on_discard_pile_during_swap() {
+        let env = TestSetup::two_players_one_cards()
+            .with_all_cards_known()
+            .with_events(&[
+                // First get the card swap buff
+                ServerMessage::PublishCardPublically {
+                    card_id: CardId(2),
+                    value: KnownCard {
+                        rank: Rank::Jack,
+                        suit: Suit::Hearts,
+                    },
+                },
+                ServerMessage::TakeFreshCardFromDeck {
+                    actor: player0(),
+                    card_id: CardId(2),
+                },
+                ServerMessage::DropCardOnDiscardPile {
+                    actor: player0(),
+                    card_id: CardId(2),
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                    rotation: 0.0,
+                },
+                ServerMessage::PickUpSlotCard {
+                    actor: player0(),
+                    slot_id: SlotId(0),
+                    card_id: CardId(0),
+                },
+                ServerMessage::SwapHeldCardWithSlotCard {
+                    actor: player0(),
+                    held_card_id: CardId(0),
+                    slot_card_id: CardId(1),
+                    slot_id: SlotId(1),
+                },
+                // make sure that the swapped card is also a Jack.
+                ServerMessage::PublishCardPublically {
+                    card_id: CardId(1),
+                    value: KnownCard {
+                        rank: Rank::Jack,
+                        suit: Suit::Diamonds,
+                    },
+                },
+                ServerMessage::DropCardOnDiscardPile {
+                    actor: player0(),
+                    card_id: CardId(1),
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                    rotation: 0.0,
+                },
+            ]);
 
         let mut world = env.get_world();
 
