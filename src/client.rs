@@ -7,6 +7,7 @@ use bevy_tweening::{Animator, RepeatCount, RepeatStrategy, Tween, lens::*};
 use crate::assets::*;
 use crate::cambio::*;
 use crate::cards::*;
+use crate::menu_button::MenuButton;
 use crate::messages::*;
 use crate::transport::Transport;
 
@@ -33,6 +34,12 @@ struct CursorIconFor(PlayerId);
 
 #[derive(Component)]
 struct MayLookAtIcon;
+
+#[derive(Component)]
+struct RoundOverScreen;
+
+#[derive(Component)]
+struct ImmunityIcon;
 
 pub struct ClientPlugin;
 
@@ -250,10 +257,23 @@ fn on_player_spawn(
              mut commands: Commands,
              assets: Res<GameAssets>| {
                 commands.entity(trigger.target()).with_child((
+                    ImmunityIcon,
                     Sprite::from_image(assets.locked_sprite.clone()),
                     Transform::from_translation(Vec3::new(0.0, 0.0, 10.0))
                         .with_scale(Vec3::splat(0.2)),
                 ));
+            },
+        )
+        .observe(
+            |trigger: Trigger<OnRemove, HasImmunity>,
+             mut commands: Commands,
+             immunity_icons: Query<Entity, With<ImmunityIcon>>,
+             children: Query<&Children>| {
+                for child in children.iter_descendants(trigger.target()) {
+                    if immunity_icons.contains(child) {
+                        commands.entity(child).despawn();
+                    }
+                }
             },
         );
 }
@@ -354,7 +374,7 @@ fn hud_game_finish_countdown(
     mut finish_countdown_text: Single<&mut Text, With<GameOverCountDown>>,
 ) {
     finish_countdown_text.0 = "".to_string();
-    if let Some(timer) = state.game_will_finish_in.as_ref() {
+    if let Some(timer) = state.round_will_finish_in.as_ref() {
         if !timer.finished() {
             finish_countdown_text.0 =
                 format!("Game will end in {} seconds", timer.remaining_secs().ceil());
@@ -569,6 +589,7 @@ fn effects_for_accepted_messages(
     player_ids: Query<(Entity, &PlayerId)>,
     players: Query<&PlayerState>,
     state: Single<&CambioState>,
+    round_over_screen: Query<Entity, With<RoundOverScreen>>,
     mut catched_up: Local<bool>,
     mut accepted: EventReader<AcceptedMessage>,
 ) {
@@ -685,7 +706,7 @@ fn effects_for_accepted_messages(
                     Transform::from_xyz(0.0, 0.0, 15.0).with_scale(Vec3::splat(0.07)),
                 ));
             }
-            ServerMessage::GameFinished { final_scores, .. } => {
+            ServerMessage::RoundFinished { final_scores, .. } => {
                 if *catched_up {
                     commands.spawn((
                         AudioPlayer::new(assets.vo_finalscores.clone()),
@@ -698,6 +719,7 @@ fn effects_for_accepted_messages(
 
                 commands
                     .spawn((
+                        RoundOverScreen,
                         Node {
                             width: Val::Percent(100.0),
                             height: Val::Percent(100.0),
@@ -726,7 +748,20 @@ fn effects_for_accepted_messages(
                                 },
                             ));
                         }
+
+                        parent
+                            .spawn(MenuButton("Ready Next Round".to_string()))
+                            .observe(
+                                |_: Trigger<Pointer<Click>>, mut client: ResMut<Transport>| {
+                                    client.queue_claim(ClientClaim::VoteNextRound);
+                                },
+                            );
                     });
+            }
+            ServerMessage::ResetRound => {
+                for entity in round_over_screen.iter() {
+                    commands.entity(entity).despawn();
+                }
             }
             _ => (),
         }

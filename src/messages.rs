@@ -50,6 +50,7 @@ pub enum ClientClaim {
     },
     SlapTable,
     LookAtOwnCards,
+    VoteNextRound,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -99,12 +100,14 @@ pub enum ServerMessage {
     },
     SlapTable(PlayerId),
     ReturnHeldCardToSlot(PlayerId, SlotId, CardId),
-    GameWillFinishIn(Duration),
-    GameFinished {
+    RoundWillFinishIn(Duration),
+    RoundFinished {
         all_cards: HashMap<CardId, KnownCard>,
         final_scores: HashMap<PlayerId, i32>,
     },
     SetUsername(PlayerId, String),
+    VoteNextRound(PlayerId),
+    ResetRound,
 }
 
 impl ServerMessage {

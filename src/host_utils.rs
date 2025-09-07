@@ -247,9 +247,16 @@ fn trigger_host_server_events(
     mut commands: Commands,
     states: Query<&CambioState>,
     player_at_turn: Query<(Entity, &TurnState)>,
+    players: Query<&PlayerState>,
     immunity: Query<&HasImmunity>,
     mut entropy: GlobalEntropy<WyRand>,
+    transport: ResMut<Transport>,
 ) {
+    let Transport::Host(host) = transport.into_inner() else {
+        panic!("impossible");
+    };
+
+    // Shuffle the discard pile if the deck is empty
     let state = states.get(*root).unwrap();
     if state.free_cards.is_empty() {
         commands.run_system_cached_with(
@@ -261,6 +268,7 @@ fn trigger_host_server_events(
         );
     }
 
+    // Move to the next player if the turn is finished
     for (current_player_at_turn, turn_state) in player_at_turn.iter() {
         if *turn_state == TurnState::Finished {
             let mut all_players = state.player_index.iter().collect::<Vec<_>>();
@@ -275,10 +283,10 @@ fn trigger_host_server_events(
 
             let (next_player_id, next_player) = all_players[next_player_idx];
 
-            if immunity.contains(*next_player) && state.game_will_finish_in.is_none() {
+            if immunity.contains(*next_player) && state.round_will_finish_in.is_none() {
                 commands.run_system_cached_with(
                     host_eval_event,
-                    ServerMessage::GameWillFinishIn(Duration::from_secs(5)),
+                    ServerMessage::RoundWillFinishIn(Duration::from_secs(5)),
                 );
             } else {
                 commands.run_system_cached_with(
@@ -287,5 +295,44 @@ fn trigger_host_server_events(
                 );
             };
         }
+    }
+
+    // Reset the round if we are ready to go to next round
+    if state
+        .player_index
+        .iter()
+        .map(|(_, p)| players.get(*p).unwrap())
+        .all(|p| p.voted_next_round)
+    {
+        commands.run_system_cached_with(host_eval_event, ServerMessage::ResetRound);
+
+        for (player_id, _) in state.player_index.iter() {
+            for i in 0..4 {
+                let slot_id = SlotId(host.slot_seq.generate());
+
+                commands.run_system_cached_with(
+                    host_eval_event,
+                    ServerMessage::ReceiveFreshSlot(*player_id, slot_id),
+                );
+
+                commands.run_system_cached_with(
+                    give_card_to_player,
+                    (
+                        *player_id,
+                        slot_id,
+                        if i < 2 {
+                            ReceivedCardContext::MayLookAt
+                        } else {
+                            ReceivedCardContext::Normal
+                        },
+                    ),
+                );
+            }
+        }
+
+        commands.run_system_cached_with(
+            host_eval_event,
+            ServerMessage::PlayerAtTurn(state.player_index.keys().next().unwrap().clone()),
+        );
     }
 }

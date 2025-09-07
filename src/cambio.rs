@@ -128,6 +128,14 @@ pub struct PlayerState {
     pub username: String,
     pub last_mouse_pos_world: Vec2,
     pub slots: HashSet<SlotId>,
+    pub voted_next_round: bool,
+}
+
+impl PlayerState {
+    fn reset_round(&mut self) {
+        self.slots.clear();
+        self.voted_next_round = false;
+    }
 }
 
 #[derive(Component, Clone)]
@@ -139,8 +147,23 @@ pub struct CambioState {
     pub player_index: HashMap<PlayerId, Entity>,
     pub card_lookup: CardValueLookup,
     pub discard_pile_entity: Entity,
-    pub game_finished: bool,
-    pub game_will_finish_in: Option<Timer>,
+    pub round_finished: bool,
+    pub round_will_finish_in: Option<Timer>,
+}
+
+impl CambioState {
+    fn reset_round(&mut self, commands: &mut Commands) {
+        self.free_cards = (0..52).map(CardId).collect();
+        self.discard_pile.clear();
+        for (_, entity) in self.card_index.drain() {
+            commands.entity(entity).despawn();
+        }
+        for (_, entity) in self.slot_index.drain() {
+            commands.entity(entity).despawn();
+        }
+        self.round_finished = false;
+        self.round_will_finish_in = None;
+    }
 }
 
 #[derive(Event)]
@@ -199,8 +222,8 @@ pub fn spawn_cambio_root(mut commands: Commands) {
                 player_index: HashMap::new(),
                 card_lookup: CardValueLookup::default(),
                 discard_pile_entity: discard_pile,
-                game_finished: false,
-                game_will_finish_in: None,
+                round_finished: false,
+                round_will_finish_in: None,
             },
         ))
         .id();
@@ -239,8 +262,11 @@ pub fn process_single_event(
         reject!("Provided entity is not a cambio root");
     };
 
-    if state.game_finished {
-        reject!("Game is finished");
+    if state.round_finished
+        && !matches!(msg, ServerMessage::VoteNextRound(..))
+        && !matches!(msg, ServerMessage::ResetRound)
+    {
+        reject!("Round is finished");
     }
 
     macro_rules! card_id_must_be_top_of_deck {
@@ -421,6 +447,7 @@ pub fn process_single_event(
                         last_mouse_pos_world: Vec2::ZERO,
                         slots: HashSet::new(),
                         username: format!("Player {}", player_id.player_number()),
+                        voted_next_round: false,
                     },
                     Name::new(format!("Player {}", player_id.player_number())),
                     Transform::from_xyz(x, y, 0.0),
@@ -429,6 +456,25 @@ pub fn process_single_event(
                 .id();
 
             state.player_index.insert(*player_id, player_entity);
+        }
+        ServerMessage::VoteNextRound(actor) => {
+            let player_entity = player_must_exists!(actor);
+            let Ok((_, mut player)) = players.get_mut(player_entity) else {
+                reject!("Player index corrupted");
+            };
+            player.voted_next_round = true;
+        }
+        ServerMessage::ResetRound => {
+            for (player_id, mut player) in players.iter_mut() {
+                let player_entity = player_must_exists!(player_id);
+                player.reset_round();
+                commands
+                    .entity(player_entity)
+                    .remove::<MayGiveCardTo>()
+                    .remove::<HasImmunity>();
+            }
+
+            state.reset_round(&mut commands);
         }
         ServerMessage::PlayerDisconnected(player_id) => {
             let _ = player_must_exists!(player_id);
@@ -1171,10 +1217,10 @@ pub fn process_single_event(
             *turn_state = TurnState::Finished;
             commands.entity(player_entity).insert(HasImmunity);
         }
-        ServerMessage::GameWillFinishIn(duration) => {
-            state.game_will_finish_in = Some(Timer::new(duration.clone(), TimerMode::Once));
+        ServerMessage::RoundWillFinishIn(duration) => {
+            state.round_will_finish_in = Some(Timer::new(duration.clone(), TimerMode::Once));
         }
-        ServerMessage::GameFinished { all_cards, .. } => {
+        ServerMessage::RoundFinished { all_cards, .. } => {
             for (card_id, known_card) in all_cards.iter() {
                 state.card_lookup.0.insert(*card_id, *known_card);
             }
@@ -1228,8 +1274,8 @@ pub fn process_single_event(
                 }
             }
 
-            state.game_finished = true;
-            state.game_will_finish_in = None;
+            state.round_finished = true;
+            state.round_will_finish_in = None;
         }
     }
 

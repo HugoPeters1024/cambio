@@ -285,7 +285,7 @@ fn both_sync_peers(
 }
 
 fn both_update_state_timer(mut state: Single<&mut CambioState>, time: Res<Time>) {
-    if let Some(timer) = &mut state.game_will_finish_in {
+    if let Some(timer) = &mut state.round_will_finish_in {
         timer.tick(time.delta());
     }
 }
@@ -302,7 +302,7 @@ fn host_ends_game_on_timer(
         return;
     };
 
-    if let Some(timer) = state.game_will_finish_in.as_ref() {
+    if let Some(timer) = state.round_will_finish_in.as_ref() {
         if timer.finished() {
             let mut final_score = HashMap::new();
 
@@ -321,7 +321,7 @@ fn host_ends_game_on_timer(
 
             commands.run_system_cached_with(
                 host_eval_event,
-                ServerMessage::GameFinished {
+                ServerMessage::RoundFinished {
                     all_cards: state.card_lookup.0.clone(),
                     final_scores: final_score,
                 },
@@ -427,6 +427,7 @@ fn host_processes_reliable_claims(
                 ServerMessage::SetUsername(*claimer_id, username)
             }
             ClientClaim::LookAtOwnCards => todo!(),
+            ClientClaim::VoteNextRound => ServerMessage::VoteNextRound(*claimer_id),
         };
 
         commands.run_system_cached_with(host_eval_event, server_message);
@@ -544,13 +545,13 @@ fn host_persists_and_broadcasts_accepted_events(
                 ..
             } => {
                 let value = state.card_lookup.0.get(&*card_id).unwrap().clone();
-                let msg = if *for_everyone {
+                let reveal_msg = if *for_everyone {
                     ServerMessage::PublishCardPublically(*card_id, value)
                 } else {
                     ServerMessage::PublishCardForPlayer(*actor, *card_id, Some(value))
                 };
 
-                broadcast_and_store!(msg);
+                broadcast_and_store!(reveal_msg);
             }
             ServerMessage::DropCardOnDiscardPile { card_id, .. } => {
                 broadcast_and_store!(ServerMessage::PublishCardPublically(
