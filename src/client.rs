@@ -21,7 +21,7 @@ struct PlayerIdxText;
 struct PlayerBuffText;
 
 #[derive(Component)]
-struct GameOverCountDown;
+struct RoundOverCountDown;
 
 #[derive(Component)]
 struct PlayerNameText;
@@ -40,6 +40,9 @@ struct RoundOverScreen;
 
 #[derive(Component)]
 struct ImmunityIcon;
+
+#[derive(Component)]
+struct ReadyNextRoundText(PlayerId);
 
 pub struct ClientPlugin;
 
@@ -127,7 +130,7 @@ fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: 
                     ..default()
                 },
                 Pickable::IGNORE,
-                children![(GameOverCountDown, Text::new(""), TextShadow::default())],
+                children![(RoundOverCountDown, Text::new(""), TextShadow::default())],
             )
         ],
     ));
@@ -371,7 +374,7 @@ fn hud_update_turn_buf(
 
 fn hud_game_finish_countdown(
     state: Single<&CambioState>,
-    mut finish_countdown_text: Single<&mut Text, With<GameOverCountDown>>,
+    mut finish_countdown_text: Single<&mut Text, With<RoundOverCountDown>>,
 ) {
     finish_countdown_text.0 = "".to_string();
     if let Some(timer) = state.round_will_finish_in.as_ref() {
@@ -592,6 +595,7 @@ fn effects_for_accepted_messages(
     round_over_screen: Query<Entity, With<RoundOverScreen>>,
     mut catched_up: Local<bool>,
     mut accepted: EventReader<AcceptedMessage>,
+    mut next_round_text: Query<(&mut Text, &ReadyNextRoundText)>,
 ) {
     for AcceptedMessage(msg) in accepted.read() {
         match msg {
@@ -717,40 +721,74 @@ fn effects_for_accepted_messages(
                 let mut final_scores = final_scores.iter().collect::<Vec<_>>();
                 final_scores.sort_by_key(|(_, score)| *score);
 
-                commands
+                let outer = commands
                     .spawn((
-                        RoundOverScreen,
                         Node {
                             width: Val::Percent(100.0),
                             height: Val::Percent(100.0),
                             align_items: AlignItems::Center,
                             justify_content: JustifyContent::Center,
+                            align_content: AlignContent::Center,
                             flex_direction: FlexDirection::Column,
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+                        RoundOverScreen,
+                    ))
+                    .id();
+
+                commands
+                    .spawn((
+                        ChildOf(outer),
+                        Node {
+                            display: Display::Grid,
+                            width: Val::Percent(50.0),
+                            height: Val::Percent(50.0),
+                            justify_content: JustifyContent::FlexStart,
+                            align_items: AlignItems::FlexStart,
+                            grid_template_columns: vec![
+                                GridTrack::fr(0.1),
+                                GridTrack::fr(0.5),
+                                GridTrack::fr(0.2),
+                                GridTrack::fr(0.2),
+                            ],
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
                     ))
                     .with_children(|parent| {
                         for (i, (player_id, score)) in final_scores.iter().enumerate() {
                             let player_entity = state.player_index.get(*player_id).unwrap();
                             let player_state = players.get(*player_entity).unwrap();
-                            parent.spawn((
-                                TextShadow::default(),
-                                Text::new(format!(
-                                    "{}: {} - {}",
-                                    i + 1,
-                                    player_state.username,
-                                    score
-                                )),
-                                TextFont {
-                                    font_size: 30.0,
-                                    ..default()
-                                },
-                            ));
+
+                            macro_rules! text_node {
+                                ($text: expr, $bundle: expr) => {
+                                    parent.spawn((
+                                        Node {
+                                            padding: UiRect::all(Val::Px(5.0)),
+                                            ..default()
+                                        },
+                                        children![(Text::new($text), $bundle)],
+                                    ));
+                                };
+                            }
+
+                            text_node!(i.to_string(), ());
+                            text_node!(player_state.username.clone(), ());
+                            text_node!(score.to_string(), ());
+                            text_node!("[ ]".to_string(), ReadyNextRoundText(**player_id));
                         }
 
                         parent
-                            .spawn(MenuButton("Ready Next Round".to_string()))
+                            .spawn((
+                                Node {
+                                    grid_column: GridPlacement::span(4),
+                                    display: Display::Flex,
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::FlexEnd,
+                                    ..default()
+                                },
+                                children![MenuButton("Ready".to_string())],
+                            ))
                             .observe(
                                 |_: Trigger<Pointer<Click>>, mut client: ResMut<Transport>| {
                                     client.queue_claim(ClientClaim::VoteNextRound);
@@ -761,6 +799,14 @@ fn effects_for_accepted_messages(
             ServerMessage::ResetRound => {
                 for entity in round_over_screen.iter() {
                     commands.entity(entity).despawn();
+                }
+            }
+            ServerMessage::VoteNextRound(player_id) => {
+                if let Some((mut text, _)) = next_round_text
+                    .iter_mut()
+                    .find(|(_, ReadyNextRoundText(id))| id == player_id)
+                {
+                    text.0 = "[X]".to_string();
                 }
             }
             _ => (),
