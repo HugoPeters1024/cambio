@@ -5,7 +5,7 @@ use std::{
 
 use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_matchbox::prelude::PeerId;
-use bevy_tweening::{Animator, Tween, lens::TransformPositionLens};
+use bevy_tweening::{lens::TransformPositionLens, Tween, TweenAnim};
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use serde::{Deserialize, Serialize};
 
@@ -166,7 +166,7 @@ impl CambioState {
     }
 }
 
-#[derive(Event)]
+#[derive(Message)]
 pub struct AcceptedMessage(pub ServerMessage);
 
 #[derive(Debug, Clone)]
@@ -182,7 +182,7 @@ pub struct CambioPlugin;
 
 impl Plugin for CambioPlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<AcceptedMessage>();
+        app.add_message::<AcceptedMessage>();
         app.add_systems(Update, handle_unreveal_timer);
     }
 }
@@ -194,7 +194,7 @@ fn handle_unreveal_timer(
 ) {
     for (entity, mut timer) in query.iter_mut() {
         timer.0.tick(time.delta());
-        if timer.0.finished() {
+        if timer.0.is_finished() {
             commands
                 .entity(entity)
                 .remove::<UnrevealKnownCardTimer>()
@@ -244,7 +244,7 @@ pub fn process_single_event(
     matching_discard: Query<&WasMatchingDiscard>,
     (may_give_card_to, may_look_at): (Query<&MayGiveCardTo>, Query<&MayLookAt>),
     immunity: Query<&HasImmunity>,
-    mut accepted: EventWriter<AcceptedMessage>,
+    mut accepted: MessageWriter<AcceptedMessage>,
     mut player_at_turn: Query<(Entity, &mut TurnState)>,
     mut commands: Commands,
 ) -> Result<(), RejectionReason> {
@@ -587,7 +587,7 @@ pub fn process_single_event(
                 .entity(card_entity)
                 .remove::<IsHeldBy>()
                 .insert(Transform::from_xyz(0.0, 0.0, 1.0))
-                .insert(Animator::new(tween))
+                .insert(TweenAnim::new(tween))
                 .insert(ChildOf(slot_entity))
                 .insert(Pickable::default());
         }
@@ -1286,7 +1286,7 @@ pub fn process_single_event(
 
 #[cfg(test)]
 mod tests {
-    use bevy::{asset::uuid::Uuid, ecs::event::EventRegistry};
+    use bevy::{asset::uuid::Uuid, ecs::message::MessageRegistry};
     use strum::IntoEnumIterator;
 
     use crate::messages::ReceivedCardContext;
@@ -1316,7 +1316,7 @@ mod tests {
     impl TestSetup {
         fn new() -> TestSetup {
             let mut world = World::new();
-            EventRegistry::register_event::<AcceptedMessage>(&mut world);
+            MessageRegistry::register_message::<AcceptedMessage>(&mut world);
 
             world.run_system_cached(spawn_cambio_root).unwrap();
             let root = world

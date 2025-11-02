@@ -37,16 +37,16 @@ dev = [
 ]
 
 [dependencies]
-bevy = {version = "0.16.1", features = ["jpeg", "serialize"]}
-bevy_asset_loader = { version = "0.23.0", features = ["2d"] }
-bevy_matchbox = { version = "0.12.0" }
+bevy = {version = "0.17.2", features = ["jpeg", "serialize"]}
+bevy_asset_loader = { version = "0.24.0-rc.1", features = ["2d"] }
+bevy_matchbox = { version = "0.13.0" }
 bincode = { version = "2.0.1", features = ["serde"] }
 serde = { version = "1.0.219", features = ["derive"] }
 num-traits = "0.2.19"
 strum = "0.27.2"
 strum_macros = "0.27.2"
-bevy_tweening = "0.13.0"
-bevy_rand = {version = "0.11.3", features = ["wyrand"]}
+bevy_tweening = "0.14.0"
+bevy_rand = {version = "0.12.1", features = ["wyrand"]}
 rand_core = "0.9.3"
 rand = "0.9.2"
 itertools = "0.14.0"
@@ -56,7 +56,7 @@ winit = { version = "0.30", default-features = false }
 image = { version = "0.25", default-features = false }
 ## This greatly improves WGPU's performance due to its heavy use of trace! calls
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
-bevy_ui_text_input = "0.5.2"
+bevy_ui_text_input = { git = "https://github.com/ickshonpe/bevy_ui_text_input", rev = "95927e9b4a6590429d3ed1e7d07ff07316630848" }
 
 # Native-only dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use bevy::prelude::*;
-use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
+use bevy_rand::{global::GlobalRng, prelude::WyRand};
 use rand::{RngCore, seq::SliceRandom};
 use strum::IntoEnumIterator;
 
@@ -16,7 +16,7 @@ pub fn host_eval_event(
     In(msg): In<ServerMessage>,
     mut commands: Commands,
     state: Single<(Entity, &mut CambioState)>,
-    mut entropy: GlobalEntropy<WyRand>,
+    mut entropy: Single<&mut WyRand, With<GlobalRng>>
 ) {
     let (root, mut state) = state.into_inner();
 
@@ -249,7 +249,7 @@ fn trigger_host_server_events(
     player_at_turn: Query<(Entity, &TurnState)>,
     players: Query<&PlayerState>,
     immunity: Query<&HasImmunity>,
-    mut entropy: GlobalEntropy<WyRand>,
+    mut entropy: Single<&mut WyRand, With<GlobalRng>>,
     transport: ResMut<Transport>,
 ) {
     let Transport::Host(host) = transport.into_inner() else {

@@ -88,23 +88,23 @@ impl Plugin for CardPlugin {
     }
 }
 
-fn setup_grow_on_hover(trigger: Trigger<OnAdd, GrowOnHover>, mut commands: Commands) {
-    fn on_hover_in(trigger: Trigger<Pointer<Over>>, mut t: Query<&mut Transform>) {
-        if let Ok(mut transform) = t.get_mut(trigger.target()) {
+fn setup_grow_on_hover(trigger: On<Add, GrowOnHover>, mut commands: Commands) {
+    fn on_hover_in(trigger: On<Pointer<Over>>, mut t: Query<&mut Transform>) {
+        if let Ok(mut transform) = t.get_mut(trigger.event_target()) {
             transform.scale.x = 1.1;
             transform.scale.y = 1.1;
         }
     }
 
-    fn on_hover_out(trigger: Trigger<Pointer<Out>>, mut t: Query<&mut Transform>) {
-        if let Ok(mut transform) = t.get_mut(trigger.target()) {
+    fn on_hover_out(trigger: On<Pointer<Out>>, mut t: Query<&mut Transform>) {
+        if let Ok(mut transform) = t.get_mut(trigger.event_target()) {
             transform.scale.x = 1.0;
             transform.scale.y = 1.0;
         }
     }
 
     commands
-        .entity(trigger.target())
+        .entity(trigger.event_target())
         .observe(on_hover_in)
         .observe(on_hover_out);
 }
@@ -135,9 +135,9 @@ fn sync_sprite_with_card(
     }
 }
 
-fn on_spawn_card(trigger: Trigger<OnAdd, SomeCard>, mut commands: Commands) {
+fn on_spawn_card(trigger: On<Add, SomeCard>, mut commands: Commands) {
     // Add a nice outline for constrast
-    commands.entity(trigger.target()).with_child((
+    commands.entity(trigger.event_target()).with_child((
         Sprite::from_color(
             Color::srgb(0.1, 0.1, 0.1),
             Vec2::new(DESIRED_CARD_WIDTH + 2.0, DESIRED_CARD_HEIGHT + 2.0),
@@ -146,8 +146,8 @@ fn on_spawn_card(trigger: Trigger<OnAdd, SomeCard>, mut commands: Commands) {
     ));
 }
 
-fn on_spawn_slot(trigger: Trigger<OnAdd, CardSlot>, mut commands: Commands) {
-    commands.entity(trigger.target()).insert(Sprite::from_color(
+fn on_spawn_slot(trigger: On<Add, CardSlot>, mut commands: Commands) {
+    commands.entity(trigger.event_target()).insert(Sprite::from_color(
         Color::srgb(0.0, 0.2, 0.0),
         Vec2::new(DESIRED_CARD_WIDTH + 4.0, DESIRED_CARD_HEIGHT + 4.0),
     ));

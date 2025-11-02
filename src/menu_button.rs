@@ -4,8 +4,8 @@ const NORMAL_BUTTON: Color = Color::srgb(0.15, 0.15, 0.15);
 const HOVERED_BUTTON: Color = Color::srgb(0.25, 0.25, 0.25);
 const PRESSED_BUTTON: Color = Color::srgb(0.35, 0.75, 0.35);
 
-#[derive(Event)]
-pub struct MenuButtonClicked;
+#[derive(EntityEvent)]
+pub struct MenuButtonClicked(Entity);
 
 #[derive(Component)]
 #[require(Node, Button)]
@@ -22,15 +22,15 @@ impl Plugin for MenuButtonPlugin {
 }
 
 fn on_button_spawn(
-    trigger: Trigger<OnAdd, MenuButton>,
+    trigger: On<Add, MenuButton>,
     mut commands: Commands,
     menu_buttons: Query<&MenuButton>,
 ) {
-    let Ok(menu_button) = menu_buttons.get(trigger.target()) else {
+    let Ok(menu_button) = menu_buttons.get(trigger.event_target()) else {
         return;
     };
 
-    commands.entity(trigger.target()).insert((
+    commands.entity(trigger.event_target()).insert((
         Button,
         Node {
             width: Val::Px(180.0),
@@ -42,7 +42,7 @@ fn on_button_spawn(
             align_items: AlignItems::Center,
             ..default()
         },
-        BorderColor(Color::BLACK),
+        BorderColor::all(Color::BLACK),
         BorderRadius::MAX,
         BackgroundColor(NORMAL_BUTTON),
         children![(
@@ -68,16 +68,16 @@ fn button_system(
         match *interaction {
             Interaction::Pressed => {
                 *color = PRESSED_BUTTON.into();
-                border_color.0 = RED.into();
-                commands.trigger_targets(MenuButtonClicked, entity);
+                border_color.set_all(RED);
+                commands.trigger(MenuButtonClicked(entity));
             }
             Interaction::Hovered => {
                 *color = HOVERED_BUTTON.into();
-                border_color.0 = Color::WHITE;
+                border_color.set_all(Color::WHITE);
             }
             Interaction::None => {
                 *color = NORMAL_BUTTON.into();
-                border_color.0 = Color::BLACK;
+                border_color.set_all(Color::BLACK);
             }
         }
     }

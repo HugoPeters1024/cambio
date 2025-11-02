@@ -39,7 +39,7 @@ fn setup_menu(mut commands: Commands) {
     commands.spawn((
         Camera2d,
         Projection::Orthographic(OrthographicProjection {
-            scaling_mode: bevy::render::camera::ScalingMode::FixedVertical {
+            scaling_mode: bevy::camera::ScalingMode::FixedVertical {
                 viewport_height: 480.0,
             },
             ..OrthographicProjection::default_2d()
@@ -48,7 +48,7 @@ fn setup_menu(mut commands: Commands) {
 
     let root = commands
         .spawn((
-            StateScoped(GamePhase::Menu),
+            DespawnOnExit(GamePhase::Menu),
             MenuRoot,
             Node {
                 width: Val::Percent(100.0),
@@ -226,7 +226,7 @@ fn setup_menu(mut commands: Commands) {
 }
 
 fn on_host_game(
-    _trigger: Trigger<MenuButtonClicked>,
+    _trigger: On<MenuButtonClicked>,
     mut commands: Commands,
     server_url_input: Single<(&TextInputContents, &TextInputPrompt), With<ServerUrlInput>>,
     username_input: Single<(&TextInputContents, &TextInputPrompt), With<UsernameInput>>,
@@ -260,7 +260,7 @@ fn on_host_game(
 }
 
 fn on_join_game(
-    _trigger: Trigger<MenuButtonClicked>,
+    _trigger: On<MenuButtonClicked>,
     mut commands: Commands,
     server_url_input: Single<(&TextInputContents, &TextInputPrompt), With<ServerUrlInput>>,
     username_input: Single<(&TextInputContents, &TextInputPrompt), With<UsernameInput>>,

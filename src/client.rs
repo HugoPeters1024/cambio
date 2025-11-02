@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_tweening::lens::TransformRotateZLens;
-use bevy_tweening::{Animator, RepeatCount, RepeatStrategy, Tween, lens::*};
+use bevy_tweening::{RepeatCount, RepeatStrategy, Tween, TweenAnim, lens::*};
 
 use crate::assets::*;
 use crate::cambio::*;
@@ -174,24 +174,18 @@ fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: 
             Transform::from_xyz(90.0, 0.0, 0.0),
             GrowOnHover,
         ))
-        .observe(
-            |_: Trigger<Pointer<Click>>, mut client: ResMut<Transport>| {
-                client.queue_claim(ClientClaim::SlapTable);
-            },
-        );
+        .observe(|_: On<Pointer<Click>>, mut client: ResMut<Transport>| {
+            client.queue_claim(ClientClaim::SlapTable);
+        });
 }
 
-fn on_may_look_added(
-    trigger: Trigger<OnAdd, MayLookAt>,
-    assets: Res<GameAssets>,
-    mut commands: Commands,
-) {
+fn on_may_look_added(trigger: On<Add, MayLookAt>, assets: Res<GameAssets>, mut commands: Commands) {
     commands.spawn((
         Sprite {
             custom_size: Some(Vec2::splat(64.0)),
             ..Sprite::from_image(assets.reveal_sprite.clone())
         },
-        ChildOf(trigger.target()),
+        ChildOf(trigger.event_target()),
         Transform::from_xyz(0.0, 0.0, 10.0),
         GrowOnHover,
         MayLookAtIcon,
@@ -199,13 +193,13 @@ fn on_may_look_added(
 }
 
 fn on_may_look_removed(
-    trigger: Trigger<OnRemove, MayLookAt>,
+    trigger: On<Remove, MayLookAt>,
     icons: Query<Entity, With<MayLookAtIcon>>,
     children: Query<&Children>,
     mut commands: Commands,
 ) {
     children
-        .iter_descendants(trigger.target())
+        .iter_descendants(trigger.event_target())
         .for_each(|child| {
             if let Ok(icon) = icons.get(child) {
                 commands.entity(icon).despawn();
@@ -214,20 +208,18 @@ fn on_may_look_removed(
 }
 
 fn on_player_spawn(
-    trigger: Trigger<OnAdd, PlayerId>,
+    trigger: On<Add, PlayerId>,
     player_ids: Query<&PlayerId>,
     mut commands: Commands,
     mut client: ResMut<Transport>,
-    mut window: Single<&mut Window, With<PrimaryWindow>>,
     assets: Res<GameAssets>,
 ) {
-    let player_id = *player_ids.get(trigger.target()).unwrap();
+    let player_id = *player_ids.get(trigger.event_target()).unwrap();
 
     // Mark this player as the local player and send
     // a claim to update our username
     if player_id.peer_id == client.socket_id().unwrap() {
-        commands.entity(trigger.target()).insert(MyPlayer);
-        window.cursor_options.visible = false;
+        commands.entity(trigger.event_target()).insert(MyPlayer);
         let claim = ClientClaim::SetUserName {
             username: client.username(),
         };
@@ -243,7 +235,7 @@ fn on_player_spawn(
     ));
 
     commands
-        .entity(trigger.target())
+        .entity(trigger.event_target())
         .with_child((
             PlayerNameText,
             Text2d::new(format!("Player {}", player_id.player_number())),
@@ -256,10 +248,8 @@ fn on_player_spawn(
             TextColor(Color::WHITE),
         ))
         .observe(
-            |trigger: Trigger<OnAdd, HasImmunity>,
-             mut commands: Commands,
-             assets: Res<GameAssets>| {
-                commands.entity(trigger.target()).with_child((
+            |trigger: On<Add, HasImmunity>, mut commands: Commands, assets: Res<GameAssets>| {
+                commands.entity(trigger.event_target()).with_child((
                     ImmunityIcon,
                     Sprite::from_image(assets.locked_sprite.clone()),
                     Transform::from_translation(Vec3::new(0.0, 0.0, 10.0))
@@ -268,11 +258,11 @@ fn on_player_spawn(
             },
         )
         .observe(
-            |trigger: Trigger<OnRemove, HasImmunity>,
+            |trigger: On<Remove, HasImmunity>,
              mut commands: Commands,
              immunity_icons: Query<Entity, With<ImmunityIcon>>,
              children: Query<&Children>| {
-                for child in children.iter_descendants(trigger.target()) {
+                for child in children.iter_descendants(trigger.event_target()) {
                     if immunity_icons.contains(child) {
                         commands.entity(child).despawn();
                     }
@@ -281,8 +271,8 @@ fn on_player_spawn(
         );
 }
 
-fn on_discard_pile_spawn(trigger: Trigger<OnAdd, DiscardPile>, mut commands: Commands) {
-    commands.entity(trigger.target()).insert((
+fn on_discard_pile_spawn(trigger: On<Add, DiscardPile>, mut commands: Commands) {
+    commands.entity(trigger.event_target()).insert((
         Name::new("Discard Pile"),
         GrowOnHover,
         Transform::from_xyz(0.0, 0.0, 0.0),
@@ -378,7 +368,7 @@ fn hud_game_finish_countdown(
 ) {
     finish_countdown_text.0 = "".to_string();
     if let Some(timer) = state.round_will_finish_in.as_ref() {
-        if !timer.finished() {
+        if !timer.is_finished() {
             finish_countdown_text.0 =
                 format!("Game will end in {} seconds", timer.remaining_secs().ceil());
         }
@@ -409,7 +399,7 @@ fn sync_held_by(mut held: Query<(&mut Transform, &IsHeldBy)>, players: Query<&Pl
 }
 
 fn click_slot_card(
-    mut trigger: Trigger<Pointer<Click>>,
+    mut trigger: On<Pointer<Click>>,
     me: Single<Entity, With<MyPlayer>>,
     cards: Query<&CardId>,
     is_holding: Query<&IsHoldingCard>,
@@ -417,11 +407,11 @@ fn click_slot_card(
     slot_ids: Query<&SlotId>,
     mut client: ResMut<Transport>,
 ) {
-    let Ok(card_id) = cards.get(trigger.target()) else {
+    let Ok(card_id) = cards.get(trigger.event_target()) else {
         return;
     };
 
-    let card_entity = trigger.target();
+    let card_entity = trigger.event_target();
 
     if let Ok(BelongsToSlot(slot_entity)) = belongs_to_slot.get(card_entity) {
         let slot_id = slot_ids.get(*slot_entity).unwrap();
@@ -457,7 +447,7 @@ fn click_slot_card(
 }
 
 fn click_discard_pile(
-    trigger: Trigger<Pointer<Click>>,
+    trigger: On<Pointer<Click>>,
     discard_pile: Query<Entity, With<DiscardPile>>,
     state: Single<&CambioState>,
     me: Single<Entity, With<MyPlayer>>,
@@ -465,7 +455,7 @@ fn click_discard_pile(
     is_holding: Query<&IsHoldingCard>,
     mut client: ResMut<Transport>,
 ) {
-    if !discard_pile.contains(trigger.target()) {
+    if !discard_pile.contains(trigger.event_target()) {
         return;
     };
 
@@ -481,19 +471,19 @@ fn click_discard_pile(
     }
 }
 
-fn click_deck(_trigger: Trigger<Pointer<Click>>, mut client: ResMut<Transport>) {
+fn click_deck(_trigger: On<Pointer<Click>>, mut client: ResMut<Transport>) {
     client.queue_claim(ClientClaim::TakeFreshCardFromDeck);
 }
 
 fn click_slot(
-    mut trigger: Trigger<Pointer<Click>>,
+    mut trigger: On<Pointer<Click>>,
     me: Single<Entity, With<MyPlayer>>,
     card_ids: Query<&CardId>,
     slot_ids: Query<&SlotId>,
     is_holding: Query<&IsHoldingCard>,
     mut client: ResMut<Transport>,
 ) {
-    let Ok(slot_id) = slot_ids.get(trigger.target()) else {
+    let Ok(slot_id) = slot_ids.get(trigger.event_target()) else {
         return;
     };
 
@@ -509,18 +499,18 @@ fn click_slot(
 }
 
 fn on_player_turn_added(
-    trigger: Trigger<OnAdd, TurnState>,
+    trigger: On<Add, TurnState>,
     mut commands: Commands,
     players: Query<&PlayerId>,
     assets: Res<GameAssets>,
 ) {
-    let Ok(player_id) = players.get(trigger.target()) else {
+    let Ok(player_id) = players.get(trigger.event_target()) else {
         return;
     };
 
     for i in 0..2 {
         let left_or_right = if i == 0 { -1.0 } else { 1.0 };
-        commands.entity(trigger.target()).with_child((
+        commands.entity(trigger.event_target()).with_child((
             PlayerTurnIcon,
             Transform::from_rotation(Quat::from_rotation_z(
                 -std::f32::consts::PI / 2.0 * left_or_right,
@@ -529,7 +519,7 @@ fn on_player_turn_added(
                 custom_size: Some(Vec2::splat(20.0)),
                 ..Sprite::from_image(assets.arrow_down_sprite.clone())
             },
-            Animator::new(
+            TweenAnim::new(
                 Tween::new(
                     EaseFunction::QuadraticInOut,
                     Duration::from_millis(500),
@@ -555,12 +545,12 @@ fn on_player_turn_added(
 }
 
 fn on_player_turn_removed(
-    trigger: Trigger<OnRemove, TurnState>,
+    trigger: On<Remove, TurnState>,
     mut commands: Commands,
     children: Query<&Children>,
     icon: Query<Entity, With<PlayerTurnIcon>>,
 ) {
-    for child in children.iter_descendants(trigger.target()) {
+    for child in children.iter_descendants(trigger.event_target()) {
         if let Ok(icon_entity) = icon.get(child) {
             commands.entity(icon_entity).despawn();
         }
@@ -594,7 +584,7 @@ fn effects_for_accepted_messages(
     state: Single<&CambioState>,
     round_over_screen: Query<Entity, With<RoundOverScreen>>,
     mut catched_up: Local<bool>,
-    mut accepted: EventReader<AcceptedMessage>,
+    mut accepted: MessageReader<AcceptedMessage>,
     mut next_round_text: Query<(&mut Text, &ReadyNextRoundText)>,
 ) {
     for AcceptedMessage(msg) in accepted.read() {
@@ -618,7 +608,7 @@ fn effects_for_accepted_messages(
                     if let Some(card_entity) = state.card_index.get(card_id) {
                         commands
                             .entity(*card_entity)
-                            .insert(Animator::new(Tween::new(
+                            .insert(TweenAnim::new(Tween::new(
                                 EaseFunction::CubicOut,
                                 Duration::from_millis(500),
                                 TransformScaleLens {
@@ -656,7 +646,7 @@ fn effects_for_accepted_messages(
                     ));
 
                     if let Some(card_entity) = state.card_index.get(slot_card_id) {
-                        commands.entity(*card_entity).insert(Animator::new(
+                        commands.entity(*card_entity).insert(TweenAnim::new(
                             Tween::new(
                                 EaseFunction::Linear,
                                 Duration::from_millis(50),
@@ -790,7 +780,7 @@ fn effects_for_accepted_messages(
                                 children![MenuButton("Ready".to_string())],
                             ))
                             .observe(
-                                |_: Trigger<Pointer<Click>>, mut client: ResMut<Transport>| {
+                                |_: On<Pointer<Click>>, mut client: ResMut<Transport>| {
                                     client.queue_claim(ClientClaim::VoteNextRound);
                                 },
                             );
@@ -816,10 +806,7 @@ fn effects_for_accepted_messages(
 
 fn setup_connection_lost(
     mut commands: Commands,
-    mut window: Single<&mut Window, With<PrimaryWindow>>,
 ) {
-    window.cursor_options.visible = true;
-
     commands.spawn((
         Node {
             width: Val::Percent(100.0),

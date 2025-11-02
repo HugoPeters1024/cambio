@@ -1,10 +1,11 @@
 use bevy::asset::AssetMetaCheck;
+use bevy::ecs::system::NonSendMarker;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy::window::WindowResolution;
 use bevy::winit::UpdateMode;
+use bevy::winit::WINIT_WINDOWS;
 use bevy::winit::WinitSettings;
-use bevy::winit::WinitWindows;
 use std::io::Cursor;
 use winit::window::Icon;
 
@@ -34,7 +35,7 @@ fn main() {
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "float_me_pls".to_string(),
-                    resolution: WindowResolution::new(1280.0, 720.0),
+                    resolution: WindowResolution::new(1280, 720),
                     // Bind to canvas included in `index.html`
                     canvas: Some("#bevy".to_owned()),
                     // fill the entire browser window
@@ -75,23 +76,25 @@ fn main() {
 
 // Sets the icon on windows and X11
 fn set_window_icon(
-    windows: NonSend<WinitWindows>,
     primary_window: Query<Entity, With<PrimaryWindow>>,
+    _non_send_marker: NonSendMarker,
 ) -> Result {
-    let primary_entity = primary_window.single()?;
-    let Some(primary) = windows.get_window(primary_entity) else {
-        return Err(BevyError::from("No primary window!"));
-    };
-    let icon_buf = Cursor::new(include_bytes!(
-        "../build/macos/AppIcon.iconset/icon_256x256.png"
-    ));
-    if let Ok(image) = image::load(icon_buf, image::ImageFormat::Png) {
-        let image = image.into_rgba8();
-        let (width, height) = image.dimensions();
-        let rgba = image.into_raw();
-        let icon = Icon::from_rgba(rgba, width, height).unwrap();
-        primary.set_window_icon(Some(icon));
-    };
+    WINIT_WINDOWS.with_borrow(|windows| {
+        let primary_entity = primary_window.single()?;
+        let Some(primary) = windows.get_window(primary_entity) else {
+            return Err(BevyError::from("No primary window!"));
+        };
+        let icon_buf = Cursor::new(include_bytes!(
+            "../build/macos/AppIcon.iconset/icon_256x256.png"
+        ));
+        if let Ok(image) = image::load(icon_buf, image::ImageFormat::Png) {
+            let image = image.into_rgba8();
+            let (width, height) = image.dimensions();
+            let rgba = image.into_raw();
+            let icon = Icon::from_rgba(rgba, width, height).unwrap();
+            primary.set_window_icon(Some(icon));
+        };
 
-    Ok(())
+        Ok(())
+    })
 }

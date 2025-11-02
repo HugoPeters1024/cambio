@@ -3,7 +3,7 @@ use bevy_matchbox::{
     MatchboxSocket,
     prelude::{PeerId, PeerState, WebRtcSocketBuilder},
 };
-use bevy_rand::{global::GlobalEntropy, prelude::WyRand};
+use bevy_rand::{global::GlobalRng, prelude::WyRand};
 use rand::Rng;
 
 use crate::{
@@ -303,7 +303,7 @@ fn host_ends_game_on_timer(
     };
 
     if let Some(timer) = state.round_will_finish_in.as_ref() {
-        if timer.finished() {
+        if timer.is_finished() {
             let mut final_score = HashMap::new();
 
             for (player_id, player_entity) in state.player_index.iter() {
@@ -359,7 +359,7 @@ fn host_processes_reliable_claims(
     mut commands: Commands,
     transport: ResMut<Transport>,
     state: Single<&CambioState>,
-    mut entropy: GlobalEntropy<WyRand>,
+    mut entropy: Single<&mut WyRand, With<GlobalRng>>,
 ) {
     let Transport::Host(host) = transport.into_inner() else {
         return;
@@ -494,7 +494,7 @@ fn host_processes_unreliable_claims(
 
 fn host_persists_and_broadcasts_accepted_events(
     transport: ResMut<Transport>,
-    mut accepted: EventReader<AcceptedMessage>,
+    mut accepted: MessageReader<AcceptedMessage>,
     state: Single<&CambioState>,
 ) {
     let Transport::Host(host) = transport.into_inner() else {
