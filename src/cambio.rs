@@ -122,6 +122,22 @@ pub struct CambioRoot;
 #[derive(Component)]
 pub struct DiscardPile;
 
+/// Tracks cumulative scores across multiple rounds
+#[derive(Resource, Debug, Clone)]
+pub struct GameScores {
+    pub cumulative_scores: HashMap<PlayerId, i32>,
+    pub is_game_over: bool,
+}
+
+impl Default for GameScores {
+    fn default() -> Self {
+        Self {
+            cumulative_scores: HashMap::new(),
+            is_game_over: false,
+        }
+    }
+}
+
 #[derive(Component)]
 #[require(Transform, InheritedVisibility)]
 pub struct PlayerState {
@@ -1220,7 +1236,7 @@ pub fn process_single_event(
         ServerMessage::RoundWillFinishIn(duration) => {
             state.round_will_finish_in = Some(Timer::new(duration.clone(), TimerMode::Once));
         }
-        ServerMessage::RoundFinished { all_cards, .. } => {
+        ServerMessage::RoundFinished { all_cards, cumulative_scores: _, is_game_over: _, .. } => {
             for (card_id, known_card) in all_cards.iter() {
                 state.card_lookup.0.insert(*card_id, *known_card);
             }

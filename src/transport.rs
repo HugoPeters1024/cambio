@@ -163,6 +163,11 @@ impl Plugin for TransportPlugin {
             OnEnter(GamePhase::Playing),
             (spawn_cambio_root, host_initializes_its_player).chain(),
         );
+        
+        // Initialize game scores when entering playing phase
+        app.add_systems(OnEnter(GamePhase::Playing), |mut commands: Commands| {
+            commands.insert_resource(crate::cambio::GameScores::default());
+        });
 
         app.add_systems(
             Update,
@@ -297,6 +302,7 @@ fn host_ends_game_on_timer(
     players: Query<&PlayerState>,
     card_ids: Query<&CardId>,
     has_card: Query<&SlotHasCard>,
+    game_scores: Option<ResMut<crate::cambio::GameScores>>,
 ) {
     let Transport::Host(_) = transport.into_inner() else {
         return;
@@ -304,7 +310,7 @@ fn host_ends_game_on_timer(
 
     if let Some(timer) = state.round_will_finish_in.as_ref() {
         if timer.is_finished() {
-            let mut final_score = HashMap::new();
+            let mut round_scores = HashMap::new();
 
             for (player_id, player_entity) in state.player_index.iter() {
                 let player_state = players.get(*player_entity).unwrap();
@@ -316,14 +322,31 @@ fn host_ends_game_on_timer(
                         score += known_card.penalty_score();
                     }
                 }
-                final_score.insert(*player_id, score);
+                round_scores.insert(*player_id, score);
+            }
+
+            // Accumulate scores
+            let mut cumulative_scores = HashMap::new();
+            let mut is_game_over = false;
+            if let Some(mut scores) = game_scores {
+                for (player_id, round_score) in round_scores.iter() {
+                    let cumulative = scores.cumulative_scores.entry(*player_id).or_insert(0);
+                    *cumulative += round_score;
+                    cumulative_scores.insert(*player_id, *cumulative);
+                    if *cumulative >= 50 {
+                        is_game_over = true;
+                    }
+                }
+                scores.is_game_over = is_game_over;
             }
 
             commands.run_system_cached_with(
                 host_eval_event,
                 ServerMessage::RoundFinished {
                     all_cards: state.card_lookup.0.clone(),
-                    final_scores: final_score,
+                    final_scores: round_scores,
+                    cumulative_scores,
+                    is_game_over,
                 },
             );
         }

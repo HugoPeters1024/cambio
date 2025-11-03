@@ -104,6 +104,8 @@ pub enum ServerMessage {
     RoundFinished {
         all_cards: HashMap<CardId, KnownCard>,
         final_scores: HashMap<PlayerId, i32>,
+        cumulative_scores: HashMap<PlayerId, i32>,
+        is_game_over: bool,
     },
     SetUsername(PlayerId, String),
     VoteNextRound(PlayerId),

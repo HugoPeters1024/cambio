@@ -700,7 +700,7 @@ fn effects_for_accepted_messages(
                     Transform::from_xyz(0.0, 0.0, 15.0).with_scale(Vec3::splat(0.07)),
                 ));
             }
-            ServerMessage::RoundFinished { final_scores, .. } => {
+            ServerMessage::RoundFinished { final_scores, cumulative_scores, is_game_over, .. } => {
                 if *catched_up {
                     commands.spawn((
                         AudioPlayer::new(assets.vo_finalscores.clone()),
@@ -709,7 +709,10 @@ fn effects_for_accepted_messages(
                 }
 
                 let mut final_scores = final_scores.iter().collect::<Vec<_>>();
-                final_scores.sort_by_key(|(_, score)| *score);
+                // Sort by cumulative score descending (winner first)
+                final_scores.sort_by_key(|(player_id, _)| {
+                    std::cmp::Reverse(cumulative_scores.get(*player_id).unwrap_or(&0))
+                });
 
                 let outer = commands
                     .spawn((
@@ -726,19 +729,28 @@ fn effects_for_accepted_messages(
                     ))
                     .id();
 
+                // Title
+                commands.spawn((
+                    ChildOf(outer),
+                    Text::new(if *is_game_over { "GAME OVER" } else { "Round Over" }),
+                    TextFont { font_size: 32.0, ..default() },
+                    TextShadow::default(),
+                ));
+
                 commands
                     .spawn((
                         ChildOf(outer),
                         Node {
                             display: Display::Grid,
-                            width: Val::Percent(50.0),
+                            width: Val::Percent(60.0),
                             height: Val::Percent(50.0),
                             justify_content: JustifyContent::FlexStart,
                             align_items: AlignItems::FlexStart,
                             grid_template_columns: vec![
                                 GridTrack::fr(0.1),
-                                GridTrack::fr(0.5),
-                                GridTrack::fr(0.2),
+                                GridTrack::fr(0.4),
+                                GridTrack::fr(0.15),
+                                GridTrack::fr(0.15),
                                 GridTrack::fr(0.2),
                             ],
                             ..default()
@@ -746,9 +758,28 @@ fn effects_for_accepted_messages(
                         BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
                     ))
                     .with_children(|parent| {
-                        for (i, (player_id, score)) in final_scores.iter().enumerate() {
+                        // Header row
+                        macro_rules! header_node {
+                            ($text: expr) => {
+                                parent.spawn((
+                                    Node {
+                                        padding: UiRect::all(Val::Px(5.0)),
+                                        ..default()
+                                    },
+                                    children![(Text::new($text), TextFont { font_size: 16.0, ..default() }, TextShadow::default())],
+                                ));
+                            };
+                        }
+                        header_node!("Rank");
+                        header_node!("Player");
+                        header_node!("Round");
+                        header_node!("Total");
+                        header_node!(if *is_game_over { "Status" } else { "Ready" });
+
+                        for (i, (player_id, round_score)) in final_scores.iter().enumerate() {
                             let player_entity = state.player_index.get(*player_id).unwrap();
                             let player_state = players.get(*player_entity).unwrap();
+                            let cumulative = cumulative_scores.get(*player_id).unwrap_or(&0);
 
                             macro_rules! text_node {
                                 ($text: expr, $bundle: expr) => {
@@ -762,28 +793,38 @@ fn effects_for_accepted_messages(
                                 };
                             }
 
-                            text_node!(i.to_string(), ());
+                            text_node!((i + 1).to_string(), ());
                             text_node!(player_state.username.clone(), ());
-                            text_node!(score.to_string(), ());
-                            text_node!("[ ]".to_string(), ReadyNextRoundText(**player_id));
+                            text_node!(round_score.to_string(), ());
+                            text_node!(cumulative.to_string(), ());
+                            if *is_game_over {
+                                text_node!(
+                                    if *cumulative >= 50 { "WINNER!" } else { "" },
+                                    TextFont { font_size: 14.0, ..default() }
+                                );
+                            } else {
+                                text_node!("[ ]".to_string(), ReadyNextRoundText(**player_id));
+                            }
                         }
 
-                        parent
-                            .spawn((
-                                Node {
-                                    grid_column: GridPlacement::span(4),
-                                    display: Display::Flex,
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::FlexEnd,
-                                    ..default()
-                                },
-                                children![MenuButton("Ready".to_string())],
-                            ))
-                            .observe(
-                                |_: On<Pointer<Click>>, mut client: ResMut<Transport>| {
-                                    client.queue_claim(ClientClaim::VoteNextRound);
-                                },
-                            );
+                        if !*is_game_over {
+                            parent
+                                .spawn((
+                                    Node {
+                                        grid_column: GridPlacement::span(5),
+                                        display: Display::Flex,
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::FlexEnd,
+                                        ..default()
+                                    },
+                                    children![MenuButton("Ready".to_string())],
+                                ))
+                                .observe(
+                                    |_: On<Pointer<Click>>, mut client: ResMut<Transport>| {
+                                        client.queue_claim(ClientClaim::VoteNextRound);
+                                    },
+                                );
+                        }
                     });
             }
             ServerMessage::ResetRound => {

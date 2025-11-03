@@ -251,6 +251,7 @@ fn trigger_host_server_events(
     immunity: Query<&HasImmunity>,
     mut entropy: Single<&mut WyRand, With<GlobalRng>>,
     transport: ResMut<Transport>,
+    game_scores: Option<Res<crate::cambio::GameScores>>,
 ) {
     let Transport::Host(host) = transport.into_inner() else {
         panic!("impossible");
@@ -298,11 +299,17 @@ fn trigger_host_server_events(
     }
 
     // Reset the round if we are ready to go to next round
-    if state
-        .player_index
-        .iter()
-        .map(|(_, p)| players.get(*p).unwrap())
-        .all(|p| p.voted_next_round)
+    // But only if the game is not over
+    let game_over = game_scores
+        .map(|scores| scores.is_game_over)
+        .unwrap_or(false);
+    
+    if !game_over
+        && state
+            .player_index
+            .iter()
+            .map(|(_, p)| players.get(*p).unwrap())
+            .all(|p| p.voted_next_round)
     {
         commands.run_system_cached_with(host_eval_event, ServerMessage::ResetRound);
 
