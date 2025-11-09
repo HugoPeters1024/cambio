@@ -109,6 +109,7 @@ pub enum ServerMessage {
     },
     SetUsername(PlayerId, String),
     VoteNextRound(PlayerId),
+    NextRoundWillStartIn(Duration),
     ResetRound,
 }
 

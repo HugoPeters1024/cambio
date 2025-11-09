@@ -16,7 +16,7 @@ pub fn host_eval_event(
     In(msg): In<ServerMessage>,
     mut commands: Commands,
     state: Single<(Entity, &mut CambioState)>,
-    mut entropy: Single<&mut WyRand, With<GlobalRng>>
+    mut entropy: Single<&mut WyRand, With<GlobalRng>>,
 ) {
     let (root, mut state) = state.into_inner();
 
@@ -49,10 +49,10 @@ pub fn host_eval_event(
                 };
             },
         ),
-        (root, msg),
+        (root, msg.clone()),
     );
 
-    commands.run_system_cached_with(trigger_host_server_events, root);
+    commands.run_system_cached_with(trigger_host_server_events, (root, msg));
 }
 
 pub fn handle_rejections(
@@ -63,7 +63,9 @@ pub fn handle_rejections(
     card_has_slot: Query<&BelongsToSlot>,
 ) {
     match rejection {
-        RejectionReason::Other(_) => (),
+        RejectionReason::Other(reason) => {
+            warn!("Event rejected: {reason}");
+        },
         RejectionReason::DiscardWrongRank { actor, card_id } => {
             let card_entity = state.card_index[&card_id];
             let slot_entity = card_has_slot.get(card_entity).unwrap().0;
@@ -243,7 +245,7 @@ pub fn give_card_to_player(
 
 // Special host events that are triggered when a certain condition is met
 fn trigger_host_server_events(
-    root: In<Entity>,
+    (root, just_processed): (In<Entity>, In<ServerMessage>),
     mut commands: Commands,
     states: Query<&CambioState>,
     player_at_turn: Query<(Entity, &TurnState)>,
@@ -298,20 +300,28 @@ fn trigger_host_server_events(
         }
     }
 
-    // Reset the round if we are ready to go to next round
-    // But only if the game is not over
+    // Trigger start next round timer if everybody voted (and the game over condition is not met)
     let game_over = game_scores
         .map(|scores| scores.is_game_over)
         .unwrap_or(false);
-    
+
     if !game_over
         && state
             .player_index
             .iter()
             .map(|(_, p)| players.get(*p).unwrap())
             .all(|p| p.voted_next_round)
+        && state.next_round_will_start_in.is_none()
     {
-        commands.run_system_cached_with(host_eval_event, ServerMessage::ResetRound);
+        warn!("Round is over, setting timer..");
+        commands.run_system_cached_with(
+            host_eval_event,
+            ServerMessage::NextRoundWillStartIn(Duration::from_secs(3)),
+        );
+    }
+
+    if matches!(*just_processed, ServerMessage::ResetRound) {
+        warn!("Round timer is finished! resetting round");
 
         for (player_id, _) in state.player_index.iter() {
             for i in 0..4 {

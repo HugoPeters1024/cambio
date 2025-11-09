@@ -163,7 +163,7 @@ impl Plugin for TransportPlugin {
             OnEnter(GamePhase::Playing),
             (spawn_cambio_root, host_initializes_its_player).chain(),
         );
-        
+
         // Initialize game scores when entering playing phase
         app.add_systems(OnEnter(GamePhase::Playing), |mut commands: Commands| {
             commands.insert_resource(crate::cambio::GameScores::default());
@@ -173,8 +173,9 @@ impl Plugin for TransportPlugin {
             Update,
             (
                 both_sync_peers,
-                both_update_state_timer,
+                both_update_state_timers,
                 host_ends_game_on_timer,
+                host_starts_next_round_on_timer,
                 host_receives_claims_from_clients,
                 host_processes_reliable_claims,
                 host_processes_unreliable_claims,
@@ -289,8 +290,12 @@ fn both_sync_peers(
     }
 }
 
-fn both_update_state_timer(mut state: Single<&mut CambioState>, time: Res<Time>) {
+fn both_update_state_timers(mut state: Single<&mut CambioState>, time: Res<Time>) {
     if let Some(timer) = &mut state.round_will_finish_in {
+        timer.tick(time.delta());
+    }
+
+    if let Some(timer) = &mut state.next_round_will_start_in {
         timer.tick(time.delta());
     }
 }
@@ -349,6 +354,22 @@ fn host_ends_game_on_timer(
                     is_game_over,
                 },
             );
+        }
+    }
+}
+
+fn host_starts_next_round_on_timer(
+    mut commands: Commands,
+    transport: ResMut<Transport>,
+    state: Single<&CambioState>,
+) {
+    let Transport::Host(_) = transport.into_inner() else {
+        return;
+    };
+
+    if let Some(timer) = state.next_round_will_start_in.as_ref() {
+        if timer.is_finished() {
+            commands.run_system_cached_with(host_eval_event, ServerMessage::ResetRound);
         }
     }
 }

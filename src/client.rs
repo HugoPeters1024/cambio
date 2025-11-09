@@ -95,6 +95,9 @@ impl Plugin for ClientPlugin {
 }
 
 fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: Res<GameAssets>) {
+    commands.add_observer(on_player_turn_added);
+    commands.add_observer(on_player_turn_removed);
+
     commands.spawn((
         Node {
             width: Val::Percent(100.0),
@@ -134,9 +137,6 @@ fn setup(mut commands: Commands, state: Single<(Entity, &CambioState)>, assets: 
             )
         ],
     ));
-
-    commands.add_observer(on_player_turn_added);
-    commands.add_observer(on_player_turn_removed);
 
     let deck_of_cards = commands
         .spawn((
@@ -700,7 +700,12 @@ fn effects_for_accepted_messages(
                     Transform::from_xyz(0.0, 0.0, 15.0).with_scale(Vec3::splat(0.07)),
                 ));
             }
-            ServerMessage::RoundFinished { final_scores, cumulative_scores, is_game_over, .. } => {
+            ServerMessage::RoundFinished {
+                final_scores,
+                cumulative_scores,
+                is_game_over,
+                ..
+            } => {
                 if *catched_up {
                     commands.spawn((
                         AudioPlayer::new(assets.vo_finalscores.clone()),
@@ -732,8 +737,15 @@ fn effects_for_accepted_messages(
                 // Title
                 commands.spawn((
                     ChildOf(outer),
-                    Text::new(if *is_game_over { "GAME OVER" } else { "Round Over" }),
-                    TextFont { font_size: 32.0, ..default() },
+                    Text::new(if *is_game_over {
+                        "GAME OVER"
+                    } else {
+                        "Round Over"
+                    }),
+                    TextFont {
+                        font_size: 32.0,
+                        ..default()
+                    },
                     TextShadow::default(),
                 ));
 
@@ -766,7 +778,14 @@ fn effects_for_accepted_messages(
                                         padding: UiRect::all(Val::Px(5.0)),
                                         ..default()
                                     },
-                                    children![(Text::new($text), TextFont { font_size: 16.0, ..default() }, TextShadow::default())],
+                                    children![(
+                                        Text::new($text),
+                                        TextFont {
+                                            font_size: 16.0,
+                                            ..default()
+                                        },
+                                        TextShadow::default()
+                                    )],
                                 ));
                             };
                         }
@@ -800,7 +819,10 @@ fn effects_for_accepted_messages(
                             if *is_game_over {
                                 text_node!(
                                     if *cumulative >= 50 { "WINNER!" } else { "" },
-                                    TextFont { font_size: 14.0, ..default() }
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    }
                                 );
                             } else {
                                 text_node!("[ ]".to_string(), ReadyNextRoundText(**player_id));
@@ -819,14 +841,13 @@ fn effects_for_accepted_messages(
                                     },
                                     children![MenuButton("Ready".to_string())],
                                 ))
-                                .observe(
-                                    |_: On<Pointer<Click>>, mut client: ResMut<Transport>| {
-                                        client.queue_claim(ClientClaim::VoteNextRound);
-                                    },
-                                );
+                                .observe(|_: On<Pointer<Click>>, mut client: ResMut<Transport>| {
+                                    client.queue_claim(ClientClaim::VoteNextRound);
+                                });
                         }
                     });
             }
+            ServerMessage::NextRoundWillStartIn(_) => {}
             ServerMessage::ResetRound => {
                 for entity in round_over_screen.iter() {
                     commands.entity(entity).despawn();
@@ -845,9 +866,7 @@ fn effects_for_accepted_messages(
     }
 }
 
-fn setup_connection_lost(
-    mut commands: Commands,
-) {
+fn setup_connection_lost(mut commands: Commands) {
     commands.spawn((
         Node {
             width: Val::Percent(100.0),

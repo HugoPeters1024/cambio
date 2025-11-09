@@ -5,7 +5,7 @@ use std::{
 
 use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_matchbox::prelude::PeerId;
-use bevy_tweening::{lens::TransformPositionLens, Tween, TweenAnim};
+use bevy_tweening::{Tween, TweenAnim, lens::TransformPositionLens};
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use serde::{Deserialize, Serialize};
 
@@ -165,6 +165,7 @@ pub struct CambioState {
     pub discard_pile_entity: Entity,
     pub round_finished: bool,
     pub round_will_finish_in: Option<Timer>,
+    pub next_round_will_start_in: Option<Timer>,
 }
 
 impl CambioState {
@@ -179,6 +180,7 @@ impl CambioState {
         }
         self.round_finished = false;
         self.round_will_finish_in = None;
+        self.next_round_will_start_in = None;
     }
 }
 
@@ -240,6 +242,7 @@ pub fn spawn_cambio_root(mut commands: Commands) {
                 discard_pile_entity: discard_pile,
                 round_finished: false,
                 round_will_finish_in: None,
+                next_round_will_start_in: None,
             },
         ))
         .id();
@@ -268,8 +271,6 @@ pub fn process_single_event(
 
     macro_rules! reject {
         ($($arg:tt)*) => {
-            warn!($($arg)*);
-            println!($($arg)*);
             return Err(RejectionReason::Other(format!($($arg)*)));
         };
     }
@@ -280,6 +281,7 @@ pub fn process_single_event(
 
     if state.round_finished
         && !matches!(msg, ServerMessage::VoteNextRound(..))
+        && !matches!(msg, ServerMessage::NextRoundWillStartIn(..))
         && !matches!(msg, ServerMessage::ResetRound)
     {
         reject!("Round is finished");
@@ -473,6 +475,9 @@ pub fn process_single_event(
 
             state.player_index.insert(*player_id, player_entity);
         }
+        ServerMessage::NextRoundWillStartIn(duration) => {
+            state.next_round_will_start_in = Some(Timer::new(duration.clone(), TimerMode::Once));
+        },
         ServerMessage::VoteNextRound(actor) => {
             let player_entity = player_must_exists!(actor);
             let Ok((_, mut player)) = players.get_mut(player_entity) else {
@@ -1236,7 +1241,12 @@ pub fn process_single_event(
         ServerMessage::RoundWillFinishIn(duration) => {
             state.round_will_finish_in = Some(Timer::new(duration.clone(), TimerMode::Once));
         }
-        ServerMessage::RoundFinished { all_cards, cumulative_scores: _, is_game_over: _, .. } => {
+        ServerMessage::RoundFinished {
+            all_cards,
+            cumulative_scores: _,
+            is_game_over: _,
+            ..
+        } => {
             for (card_id, known_card) in all_cards.iter() {
                 state.card_lookup.0.insert(*card_id, *known_card);
             }
