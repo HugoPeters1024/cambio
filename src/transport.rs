@@ -10,7 +10,7 @@ use crate::{
     assets::GamePhase,
     cambio::{
         AcceptedMessage, CambioState, CardId, PlayerId, PlayerState, RejectionReason, SlotHasCard,
-        process_single_event, spawn_cambio_root,
+        TimedEvent, process_single_event, spawn_cambio_root,
     },
     host_utils::host_eval_event,
     messages::{
@@ -291,11 +291,7 @@ fn both_sync_peers(
 }
 
 fn both_update_state_timers(mut state: Single<&mut CambioState>, time: Res<Time>) {
-    if let Some(timer) = &mut state.round_will_finish_in {
-        timer.tick(time.delta());
-    }
-
-    if let Some(timer) = &mut state.next_round_will_start_in {
+    if let Some((timer, _)) = &mut state.timed_event {
         timer.tick(time.delta());
     }
 }
@@ -313,48 +309,48 @@ fn host_ends_game_on_timer(
         return;
     };
 
-    if let Some(timer) = state.round_will_finish_in.as_ref() {
-        if timer.is_finished() {
-            let mut round_scores = HashMap::new();
+    if let Some((timer, TimedEvent::RoundFinish)) = state.timed_event.as_ref()
+        && timer.is_finished()
+    {
+        let mut round_scores = HashMap::new();
 
-            for (player_id, player_entity) in state.player_index.iter() {
-                let player_state = players.get(*player_entity).unwrap();
-                let mut score: i32 = 0;
-                for slot_id in player_state.slots.iter() {
-                    if let Ok(has_card) = has_card.get(*state.slot_index.get(slot_id).unwrap()) {
-                        let card_id = card_ids.get(has_card.card_entity()).unwrap();
-                        let known_card = state.card_lookup.0.get(card_id).unwrap();
-                        score += known_card.penalty_score();
-                    }
+        for (player_id, player_entity) in state.player_index.iter() {
+            let player_state = players.get(*player_entity).unwrap();
+            let mut score: i32 = 0;
+            for slot_id in player_state.slots.iter() {
+                if let Ok(has_card) = has_card.get(*state.slot_index.get(slot_id).unwrap()) {
+                    let card_id = card_ids.get(has_card.card_entity()).unwrap();
+                    let known_card = state.card_lookup.0.get(card_id).unwrap();
+                    score += known_card.penalty_score();
                 }
-                round_scores.insert(*player_id, score);
             }
-
-            // Accumulate scores
-            let mut cumulative_scores = HashMap::new();
-            let mut is_game_over = false;
-            if let Some(mut scores) = game_scores {
-                for (player_id, round_score) in round_scores.iter() {
-                    let cumulative = scores.cumulative_scores.entry(*player_id).or_insert(0);
-                    *cumulative += round_score;
-                    cumulative_scores.insert(*player_id, *cumulative);
-                    if *cumulative >= 50 {
-                        is_game_over = true;
-                    }
-                }
-                scores.is_game_over = is_game_over;
-            }
-
-            commands.run_system_cached_with(
-                host_eval_event,
-                ServerMessage::RoundFinished {
-                    all_cards: state.card_lookup.0.clone(),
-                    final_scores: round_scores,
-                    cumulative_scores,
-                    is_game_over,
-                },
-            );
+            round_scores.insert(*player_id, score);
         }
+
+        // Accumulate scores
+        let mut cumulative_scores = HashMap::new();
+        let mut is_game_over = false;
+        if let Some(mut scores) = game_scores {
+            for (player_id, round_score) in round_scores.iter() {
+                let cumulative = scores.cumulative_scores.entry(*player_id).or_insert(0);
+                *cumulative += round_score;
+                cumulative_scores.insert(*player_id, *cumulative);
+                if *cumulative >= 50 {
+                    is_game_over = true;
+                }
+            }
+            scores.is_game_over = is_game_over;
+        }
+
+        commands.run_system_cached_with(
+            host_eval_event,
+            ServerMessage::RoundFinished {
+                all_cards: state.card_lookup.0.clone(),
+                final_scores: round_scores,
+                cumulative_scores,
+                is_game_over,
+            },
+        );
     }
 }
 
@@ -367,10 +363,10 @@ fn host_starts_next_round_on_timer(
         return;
     };
 
-    if let Some(timer) = state.next_round_will_start_in.as_ref() {
-        if timer.is_finished() {
-            commands.run_system_cached_with(host_eval_event, ServerMessage::ResetRound);
-        }
+    if let Some((timer, TimedEvent::RoundStart)) = state.timed_event.as_ref()
+        && timer.is_finished()
+    {
+        commands.run_system_cached_with(host_eval_event, ServerMessage::ResetRound);
     }
 }
 

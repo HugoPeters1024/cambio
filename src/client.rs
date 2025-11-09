@@ -80,7 +80,7 @@ impl Plugin for ClientPlugin {
                 hud_update_player_idx,
                 hud_update_turn_buf,
                 hud_update_slap_button,
-                hud_game_finish_countdown,
+                hud_timed_event_countdown,
             )
                 .run_if(in_state(GamePhase::Playing)),
         );
@@ -362,15 +362,17 @@ fn hud_update_turn_buf(
     buff_text.0 = turn_description;
 }
 
-fn hud_game_finish_countdown(
+fn hud_timed_event_countdown(
     state: Single<&CambioState>,
     mut finish_countdown_text: Single<&mut Text, With<RoundOverCountDown>>,
 ) {
     finish_countdown_text.0 = "".to_string();
-    if let Some(timer) = state.round_will_finish_in.as_ref() {
+    if let Some((timer, ev)) = state.timed_event.as_ref() {
         if !timer.is_finished() {
-            finish_countdown_text.0 =
-                format!("Game will end in {} seconds", timer.remaining_secs().ceil());
+            finish_countdown_text.0 = match ev {
+                TimedEvent::RoundFinish => format!("Round will end in {} seconds", timer.remaining_secs().ceil()),
+                TimedEvent::RoundStart => format!("Next round will start in {} seconds", timer.remaining_secs().ceil()),
+            };
         }
     }
 }

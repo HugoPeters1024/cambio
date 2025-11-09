@@ -286,7 +286,7 @@ fn trigger_host_server_events(
 
             let (next_player_id, next_player) = all_players[next_player_idx];
 
-            if immunity.contains(*next_player) && state.round_will_finish_in.is_none() {
+            if immunity.contains(*next_player) && state.timed_event.is_none() {
                 commands.run_system_cached_with(
                     host_eval_event,
                     ServerMessage::RoundWillFinishIn(Duration::from_secs(5)),
@@ -311,7 +311,7 @@ fn trigger_host_server_events(
             .iter()
             .map(|(_, p)| players.get(*p).unwrap())
             .all(|p| p.voted_next_round)
-        && state.next_round_will_start_in.is_none()
+        && state.timed_event.is_none()
     {
         warn!("Round is over, setting timer..");
         commands.run_system_cached_with(

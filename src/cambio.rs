@@ -154,6 +154,12 @@ impl PlayerState {
     }
 }
 
+#[derive(Clone)]
+pub enum TimedEvent {
+    RoundFinish,
+    RoundStart,
+}
+
 #[derive(Component, Clone)]
 pub struct CambioState {
     pub free_cards: VecDeque<CardId>,
@@ -164,8 +170,7 @@ pub struct CambioState {
     pub card_lookup: CardValueLookup,
     pub discard_pile_entity: Entity,
     pub round_finished: bool,
-    pub round_will_finish_in: Option<Timer>,
-    pub next_round_will_start_in: Option<Timer>,
+    pub timed_event: Option<(Timer, TimedEvent)>,
 }
 
 impl CambioState {
@@ -179,8 +184,7 @@ impl CambioState {
             commands.entity(entity).despawn();
         }
         self.round_finished = false;
-        self.round_will_finish_in = None;
-        self.next_round_will_start_in = None;
+        self.timed_event = None;
     }
 }
 
@@ -241,8 +245,7 @@ pub fn spawn_cambio_root(mut commands: Commands) {
                 card_lookup: CardValueLookup::default(),
                 discard_pile_entity: discard_pile,
                 round_finished: false,
-                round_will_finish_in: None,
-                next_round_will_start_in: None,
+                timed_event: None,
             },
         ))
         .id();
@@ -476,8 +479,11 @@ pub fn process_single_event(
             state.player_index.insert(*player_id, player_entity);
         }
         ServerMessage::NextRoundWillStartIn(duration) => {
-            state.next_round_will_start_in = Some(Timer::new(duration.clone(), TimerMode::Once));
-        },
+            state.timed_event = Some((
+                Timer::new(duration.clone(), TimerMode::Once),
+                TimedEvent::RoundStart,
+            ));
+        }
         ServerMessage::VoteNextRound(actor) => {
             let player_entity = player_must_exists!(actor);
             let Ok((_, mut player)) = players.get_mut(player_entity) else {
@@ -1239,7 +1245,7 @@ pub fn process_single_event(
             commands.entity(player_entity).insert(HasImmunity);
         }
         ServerMessage::RoundWillFinishIn(duration) => {
-            state.round_will_finish_in = Some(Timer::new(duration.clone(), TimerMode::Once));
+            state.timed_event = Some((Timer::new(duration.clone(), TimerMode::Once), TimedEvent::RoundFinish));
         }
         ServerMessage::RoundFinished {
             all_cards,
@@ -1301,7 +1307,7 @@ pub fn process_single_event(
             }
 
             state.round_finished = true;
-            state.round_will_finish_in = None;
+            state.timed_event = None;
         }
     }
 
